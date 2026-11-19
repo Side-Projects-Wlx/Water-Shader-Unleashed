@@ -1,0 +1,26 @@
+# Build & Gradle
+.gradle/
+build/
+run/
+out/
+
+# IDE & Editors
+.idea/
+*.iml
+.vscode/
+
+# Logs & Temporary Files
+*.log
+*.tmp
+*.bak
+hs_err_pid*.log
+
+# OS Junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local Dev & Agent Folders
+.agents/
+research/
+tools/

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "watershader",
+  "version": "${version}",
+  "name": "Water Shader Unleashed",
+  "description": "Modernized native Babric / StationAPI port of Minecraft Beta 1.7.3 Water Shader v4c featuring planar reflections, smooth flow transitions, modern cave water, rain ripples, and underwater effects.",
+  "authors": [
+    "Wlx",
+    "Necro (Original v4c)"
+  ],
+  "license": "MIT",
+  "icon": "assets/watershader/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "net.watershader.WaterShaderClient"
+    ],
+    "stationapi:event_bus_client": [
+      "net.watershader.client.WaterShaderKeybinds"
+    ],
+    "modmenu": [
+      "net.watershader.client.WaterShaderModMenu"
+    ]
+  },
+  "mixins": [
+    "watershader.mixins.json"
+  ],
+  "depends": {
+    "minecraft": "1.0.0-beta.7.3",
+    "fabricloader": ">=0.15.0",
+    "stationapi": "*"
+  },
+  "custom": {
+    "modmenu:clientsideOnly": true
+  }
+}

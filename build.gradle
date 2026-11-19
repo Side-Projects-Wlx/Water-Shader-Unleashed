@@ -1,0 +1,142 @@
+import net.fabricmc.loom.task.GenerateSourcesTask
+
+plugins {
+    id 'java'
+    id 'maven-publish'
+    id 'fabric-loom' version '1.17.21'
+    id 'babric-loom-extension' version '1.17.5'
+}
+
+version = property("mod_version")
+group = property("maven_group")
+
+base {
+    archivesName = property("archives_base_name")
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+    withSourcesJar()
+}
+
+tasks.withType(GenerateSourcesTask).configureEach {
+    useCache = false
+}
+
+repositories {
+    maven {
+        name = "NyaRepo"
+        url = "https://maven.fildand.cz/releases"
+    }
+    maven {
+        name = "MeowRepo"
+        url = "https://maven.danygames2014.net/releases"
+    }
+    maven {
+        name = "Babric"
+        url = "https://maven.glass-launcher.net/babric"
+    }
+    maven {
+        name = "Glass Releases"
+        url = "https://maven.glass-launcher.net/releases"
+    }
+    maven {
+        name = "Glass Snapshots"
+        url = "https://maven.glass-launcher.net/snapshots"
+    }
+    maven {
+        name = "Froge Maven"
+        url = "https://maven.minecraftforge.net/"
+    }
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = "Modrinth"
+                url = "https://api.modrinth.com/maven"
+            }
+        }
+        filter {
+            includeGroup "maven.modrinth"
+        }
+    }
+    maven {
+        name = "Jitpack"
+        url = "https://jitpack.io"
+    }
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "net.glasslauncher:biny:${project.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+
+    modImplementation("net.modificationstation:StationAPI:${project.stapi_version}") {
+        exclude group: "babric", module: "fabric-loader"
+    }
+
+    modCompileOnly "net.danygames2014:modmenu:1.1.1"
+
+    implementation "org.slf4j:slf4j-api:1.8.0-beta4"
+    implementation "org.apache.logging.log4j:log4j-api:2.17.2"
+    implementation "org.apache.logging.log4j:log4j-core:2.17.2"
+    implementation "org.apache.logging.log4j:log4j-slf4j18-impl:2.17.2"
+
+    testImplementation platform("org.junit:junit-bom:5.11.4")
+    testImplementation "org.junit.jupiter:junit-jupiter"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+processResources {
+    inputs.property "version", project.version
+
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+    options.encoding = "UTF-8"
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+    failOnNoDiscoveredTests = false
+}
+
+jar {
+    if (file("LICENSE").exists()) {
+        from("LICENSE") {
+            rename { "${it}_" + base.archivesName.get() }
+        }
+    }
+}
+
+def defaultUnleashedModsDir = System.getenv("APPDATA")
+    ? "${System.getenv('APPDATA')}\\PrismLauncher\\instances\\Beta.Unleashed.2.0\\minecraft\\mods"
+    : "${System.getProperty('user.home')}/.local/share/PrismLauncher/instances/Beta.Unleashed.2.0/minecraft/mods"
+
+tasks.register("installToUnleashed") {
+    group = "deployment"
+    description = "Builds and copies the remapped mod jar into the Beta.Unleashed.2.0 mods folder."
+    dependsOn tasks.named("remapJar")
+    doLast {
+        def targetDir = file(project.findProperty("unleashedModsDir") ?: defaultUnleashedModsDir)
+        if (!targetDir.exists()) {
+            throw new GradleException("Target Unleashed mods directory does not exist: ${targetDir}")
+        }
+        targetDir.listFiles()?.each { existing ->
+            if (existing.name.startsWith("${project.archives_base_name}-") && existing.name.endsWith(".jar")) {
+                existing.delete()
+            }
+        }
+        def jarFile = tasks.named("remapJar").get().archiveFile.get().asFile
+        copy {
+            from jarFile
+            into targetDir
+        }
+        logger.lifecycle("Installed {} -> {}", jarFile.name, new File(targetDir, jarFile.name))
+    }
+}
