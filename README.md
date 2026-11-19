@@ -2,6 +2,8 @@
 
 A native Babric / StationAPI (`b1.7.3`) port and modernization of **Water Shader v4c**, built for **Beta Unleashed 2.0**.
 
+![Water Shader Unleashed Overview](docs/screenshot.jpg)
+
 ## Features
 - **Multi-Pass Planar Water Pipeline**: Supersampled main scene capture (`colorMap`), normal-encoded water stencil pass (`stencilMap`), and exact-height oblique-clipped planar reflection pass (`reflectedColorMap`).
 - **Classic Surface Aesthetics & Smooth Flow Transitions**: Preserves Water Shader v4c's animated two-layer sine-wave ripples, clear shallow seabed visibility, and crisp horizon reflections while smoothly blending horizontal and vertical flowing-to-static boundaries with watertight fluid edges.
