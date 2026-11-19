@@ -37,9 +37,9 @@ public final class WaterShaderKeybinds {
         Minecraft mc = WaterShaderClient.getMinecraft();
         if (toggleShaderKey != null && toggleShaderKey.code != Keyboard.KEY_NONE && key == toggleShaderKey.code) {
             if (!WaterShaderPipeline.isConfiguredEnabled()) {
-                WaterShaderClient.LOGGER.info("[WaterShader] Toggle ignored: disabled in config (water_mode 0)");
+                WaterShaderClient.LOGGER.info("[WaterShader] Toggle ignored: disabled in config (Water Mode: Off)");
                 if (mc != null && mc.inGameHud != null) {
-                    mc.inGameHud.addChatMessage("[WaterShader] Disabled in config (water_mode 0)");
+                    mc.inGameHud.addChatMessage("[WaterShader] Disabled in config (Water Mode: Off)");
                 }
                 return;
             }

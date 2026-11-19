@@ -18,8 +18,17 @@
     "stationapi:event_bus_client": [
       "net.watershader.client.WaterShaderKeybinds"
     ],
-    "modmenu": [
-      "net.watershader.client.WaterShaderModMenu"
+    "gcapi3": [
+      "net.watershader.config.WaterShaderGcapiConfig"
+    ],
+    "gcapi3:factory_provider": [
+      "net.watershader.config.WaterShaderConfigFactories"
+    ],
+    "gcapi3:presave": [
+      "net.watershader.config.WaterShaderConfigListener"
+    ],
+    "gcapi3:postload": [
+      "net.watershader.config.WaterShaderConfigListener"
     ]
   },
   "mixins": [
@@ -28,7 +37,11 @@
   "depends": {
     "minecraft": "1.0.0-beta.7.3",
     "fabricloader": ">=0.15.0",
-    "stationapi": "*"
+    "stationapi": "*",
+    "gcapi3": ">=3.2.1"
+  },
+  "recommends": {
+    "modmenu": "*"
   },
   "custom": {
     "modmenu:clientsideOnly": true

@@ -10,6 +10,7 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.LightType;
 import net.minecraft.world.World;
+import net.watershader.WaterShaderClient;
 import net.watershader.config.WaterShaderConfig;
 import net.watershader.math.ReflectionMath;
 import net.watershader.math.WaterEnvironmentMath;
@@ -47,6 +48,7 @@ public final class WaterShaderPipeline {
     private static WeakReference<World> lastWorldRef = new WeakReference<>(null);
 
     private static boolean initialized = false;
+    private static boolean lastConfiguredEnabled = false;
     private static boolean userEnabled = true;
     private static boolean amphetamineDetected = false;
     private static boolean capOpenGL14 = false;
@@ -148,6 +150,8 @@ public final class WaterShaderPipeline {
         envUnderwaterFactor = 0.0F;
         currentPass = WaterRenderPass.NONE;
         initialized = true;
+        lastConfiguredEnabled = isConfiguredEnabled();
+        WaterShaderConfig.setChangeListener(WaterShaderPipeline::onConfigChanged);
         log.info(
                 "[WaterShader] Pipeline initialized (water_mode={}, aa={}, refl_div={}, amphetamine={})",
                 cfg.getWaterMode(),
@@ -157,12 +161,14 @@ public final class WaterShaderPipeline {
     }
 
     public static void close() {
+        WaterShaderConfig.setChangeListener(null);
         currentPass = WaterRenderPass.NONE;
         activeClient = null;
         lastWorldRef = new WeakReference<>(null);
         WORLD_WATER_PROBE.bind(null);
         WaterLayer1Capture.abortChunkRebuildIfActive();
         WaterLayer1Mesh.resetCapabilityCache();
+        lastConfiguredEnabled = false;
         userEnabled = true;
         debugStencilView = false;
         waterVisibleInMainPass = false;
@@ -180,6 +186,48 @@ public final class WaterShaderPipeline {
         }
         WATER_PLANE_FINDER.reset();
         initialized = false;
+    }
+
+    /**
+     * Refreshes runtime caches when GlassConfigAPI 3 saves or reloads settings, triggering
+     * a chunk rebuild only if exclusions changed or {@code waterMode} transitioned from Off to active.
+     */
+    public static void onConfigChanged() {
+        if (!initialized || config == null) {
+            return;
+        }
+        Set<Integer> previousIds = new HashSet<>(EXCLUDED_BLOCK_IDS);
+        Set<String> previousKeys = new HashSet<>(EXCLUDED_BLOCK_KEYS);
+        rebuildExcludeCache(config);
+
+        boolean nowEnabled = isConfiguredEnabled();
+        boolean turnedOnFromOff = !lastConfiguredEnabled && nowEnabled;
+        boolean excludesChanged = !previousIds.equals(EXCLUDED_BLOCK_IDS) || !previousKeys.equals(EXCLUDED_BLOCK_KEYS);
+        lastConfiguredEnabled = nowEnabled;
+
+        if (!nowEnabled) {
+            debugStencilView = false;
+            envUnderwaterFactor = 0.0F;
+        }
+
+        if (logger != null) {
+            logger.info(
+                    "[WaterShader] Config updated (water_mode={}, aa={}, refl_div={}, excluded={})",
+                    config.getWaterMode(),
+                    config.getAntiAliasing(),
+                    config.getReflectionResolution(),
+                    EXCLUDED_BLOCK_IDS.size() + EXCLUDED_BLOCK_KEYS.size());
+        }
+
+        if (turnedOnFromOff || excludesChanged) {
+            Minecraft mc = (activeClient != null) ? activeClient : WaterShaderClient.getMinecraft();
+            if (mc != null && mc.world != null && mc.worldRenderer != null) {
+                mc.worldRenderer.reload();
+                if (logger != null) {
+                    logger.info("[WaterShader] Reloaded world chunks after live config update.");
+                }
+            }
+        }
     }
 
     public static boolean shouldReplaceUnderwaterOverlay() {

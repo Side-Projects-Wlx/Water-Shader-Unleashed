@@ -76,7 +76,9 @@ dependencies {
         exclude group: "babric", module: "fabric-loader"
     }
 
-    modCompileOnly "net.danygames2014:modmenu:1.1.1"
+    modImplementation("net.glasslauncher.mods:GlassConfigAPI:${project.gcapi_version}") {
+        exclude group: "babric", module: "fabric-loader"
+    }
 
     implementation "org.slf4j:slf4j-api:1.8.0-beta4"
     implementation "org.apache.logging.log4j:log4j-api:2.17.2"

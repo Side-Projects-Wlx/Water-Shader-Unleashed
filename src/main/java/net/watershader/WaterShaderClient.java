@@ -12,8 +12,8 @@ import org.apache.logging.log4j.Logger;
 import java.nio.file.Path;
 
 /**
- * Client entrypoint for Water Shader. Loads config early and compiles GPU shaders
- * once Minecraft finishes creating its OpenGL display context.
+ * Client entrypoint for Water Shader. Binds the GlassConfigAPI 3 configuration facade
+ * early and compiles GPU shaders once Minecraft finishes creating its OpenGL display context.
  */
 public final class WaterShaderClient implements ClientModInitializer {
     public static final String MOD_ID = "watershader";
@@ -26,10 +26,19 @@ public final class WaterShaderClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        Path configDir = FabricLoader.getInstance().getConfigDir();
-        Path configPath = configDir.resolve(WaterShaderConfig.CONFIG_FILE_NAME);
-        config = WaterShaderConfig.loadOrCreate(configPath, LOGGER);
-        LOGGER.info("Water Shader initialized client config; awaiting OpenGL context creation.");
+        config = new WaterShaderConfig();
+        LOGGER.info(
+            "Water Shader bound GlassConfigAPI 3 config (water_mode={}, aa={}, refl_div={}, items={}, clouds={}, player={}, v3={}, water_alpha={}, fall_alpha={}); awaiting OpenGL context creation.",
+            config.getWaterMode(),
+            config.getAntiAliasing(),
+            config.getReflectionResolution(),
+            config.isReflectiveItems(),
+            config.isReflectiveClouds(),
+            config.isReflectPlayer(),
+            config.isRenderV3(),
+            config.getWaterSurfaceTransparency(),
+            config.getWaterfallTransparency()
+        );
     }
 
     /**
@@ -43,8 +52,7 @@ public final class WaterShaderClient implements ClientModInitializer {
         glInitialized = true;
 
         if (config == null) {
-            Path configPath = FabricLoader.getInstance().getConfigDir().resolve(WaterShaderConfig.CONFIG_FILE_NAME);
-            config = WaterShaderConfig.loadOrCreate(configPath, LOGGER);
+            config = new WaterShaderConfig();
         }
 
         Path overrideDir = FabricLoader.getInstance().getConfigDir().resolve(MOD_ID).resolve("shaders");
@@ -72,10 +80,6 @@ public final class WaterShaderClient implements ClientModInitializer {
 
     public static WaterShaderConfig getConfig() {
         return config;
-    }
-
-    public static Path getConfigPath() {
-        return FabricLoader.getInstance().getConfigDir().resolve(WaterShaderConfig.CONFIG_FILE_NAME);
     }
 
     public static ShaderManager getShaderManager() {

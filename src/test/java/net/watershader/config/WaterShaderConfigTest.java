@@ -1,175 +1,27 @@
 package net.watershader.config;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import com.google.common.collect.ImmutableMap;
+import net.glasslauncher.mods.gcapi3.api.ConfigCategory;
+import net.glasslauncher.mods.gcapi3.api.ConfigEntry;
+import net.glasslauncher.mods.gcapi3.api.ConfigRoot;
+import net.glasslauncher.mods.gcapi3.impl.SeptFunction;
+import net.glasslauncher.mods.gcapi3.impl.object.ConfigEntryHandler;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.StringReader;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.lang.reflect.Field;
+import java.lang.reflect.Type;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class WaterShaderConfigTest {
-    private static final Logger LOGGER = LogManager.getLogger("watershader-test");
-
     @Test
-    void autoCreatesDefaultConfigAndRoundTrips(@TempDir Path tempDir) {
-        Path configPath = tempDir.resolve("config").resolve("watershader.txt");
-        assertTrue(Files.notExists(configPath));
+    void defaultGcapiFieldsMatchBeta173Defaults() {
+        WaterShaderGcapiConfig.ConfigFields raw = new WaterShaderGcapiConfig.ConfigFields();
+        WaterShaderConfig cfg = new WaterShaderConfig(raw);
 
-        WaterShaderConfig created = WaterShaderConfig.loadOrCreate(configPath, LOGGER);
-        assertTrue(Files.isRegularFile(configPath));
-        assertBeta173Defaults(created);
-
-        WaterShaderConfig reloaded = WaterShaderConfig.loadOrCreate(configPath, LOGGER);
-        assertBeta173Defaults(reloaded);
-    }
-
-    @Test
-    void parsesCustomValuesCommentsAndEmptyExcludeList() throws IOException {
-        String raw = """
-            // Leading comment
-            # Hash comment
-            water_mode 1 // inline comment
-            anti_aliasing 4
-            reflection_resolution 2
-            reflective_items 0
-            reflective_clouds 1
-            reflect_player off
-            render_v3 false
-            water_surface_transparency 0.25
-            waterfall_transparency 0.6
-            water_color 0.1/0.2/0.3
-            waterfall_color 0.8/0.9/1.0
-            waterfall_fog no
-            exclude_list
-            ssr_enabled 0
-            ssr_quality 2
-            fresnel_strength 1.5
-            ripple_strength 0.75
-            underwater_effect 0
-            """;
-
-        WaterShaderConfig cfg = WaterShaderConfig.parse(new BufferedReader(new StringReader(raw)), LOGGER);
-        assertEquals(1, cfg.getWaterMode());
-        assertEquals(4, cfg.getAntiAliasing());
-        assertEquals(2, cfg.getReflectionResolution());
-        assertFalse(cfg.isReflectiveItems());
-        assertTrue(cfg.isReflectiveClouds());
-        assertFalse(cfg.isReflectPlayer());
-        assertFalse(cfg.isRenderV3());
-        assertEquals(0.0F, cfg.getRenderV3Float(), 1e-6F);
-        assertEquals(0.25F, cfg.getWaterSurfaceTransparency(), 1e-6F);
-        assertEquals(0.6F, cfg.getWaterfallTransparency(), 1e-6F);
-        assertArrayEquals(new float[]{0.1F, 0.2F, 0.3F}, cfg.getWaterColor(), 1e-6F);
-        assertEquals(0.1F, cfg.getWaterColorR(), 1e-6F);
-        assertEquals(0.2F, cfg.getWaterColorG(), 1e-6F);
-        assertEquals(0.3F, cfg.getWaterColorB(), 1e-6F);
-        assertArrayEquals(new float[]{0.8F, 0.9F, 1.0F}, cfg.getWaterfallColor(), 1e-6F);
-        assertEquals(0.8F, cfg.getWaterfallColorR(), 1e-6F);
-        assertEquals(0.9F, cfg.getWaterfallColorG(), 1e-6F);
-        assertEquals(1.0F, cfg.getWaterfallColorB(), 1e-6F);
-        assertFalse(cfg.isWaterfallFog());
-        assertTrue(cfg.getExcludeList().isEmpty());
-        assertFalse(cfg.isSsrEnabled());
-        assertEquals(2, cfg.getSsrQuality());
-        assertEquals(1.5F, cfg.getFresnelStrength(), 1e-6F);
-        assertEquals(0.75F, cfg.getRippleStrength(), 1e-6F);
-        assertFalse(cfg.isUnderwaterEffect());
-    }
-
-    @Test
-    void existingV1ConfigWithoutPhase6KeysUsesBalancedDefaults() throws IOException {
-        String v1Raw = """
-            water_mode 2
-            reflection_resolution 1
-            water_color 0.0/0.5/0.35
-            """;
-        WaterShaderConfig cfg = WaterShaderConfig.parse(new BufferedReader(new StringReader(v1Raw)), LOGGER);
-        assertBeta173Defaults(cfg);
-    }
-
-    @Test
-    void clampsOutOfRangeAndIgnoresMalformedEntries() throws IOException {
-        String raw = """
-            water_mode 99
-            anti_aliasing 0
-            reflection_resolution -3
-            water_surface_transparency -0.5
-            waterfall_transparency 2.5
-            water_color bad_value
-            waterfall_color 1.0/NaN/0.5
-            ssr_quality -1
-            fresnel_strength -5.0
-            exclude_list 8, 9 79
-            unknown_future_key some_val
-            """;
-
-        WaterShaderConfig cfg = WaterShaderConfig.parse(new BufferedReader(new StringReader(raw)), LOGGER);
-        assertEquals(2, cfg.getWaterMode());
-        assertEquals(1, cfg.getAntiAliasing());
-        assertEquals(1, cfg.getReflectionResolution());
-        assertEquals(0.0F, cfg.getWaterSurfaceTransparency(), 1e-6F);
-        assertEquals(1.0F, cfg.getWaterfallTransparency(), 1e-6F);
-        assertArrayEquals(new float[]{0.0F, 0.5F, 0.35F}, cfg.getWaterColor(), 1e-6F);
-        assertArrayEquals(new float[]{1.0F, 1.0F, 1.0F}, cfg.getWaterfallColor(), 1e-6F);
-        assertEquals(0, cfg.getSsrQuality());
-        assertEquals(0.0F, cfg.getFresnelStrength(), 1e-6F);
-        assertEquals(List.of("8", "9", "79"), cfg.getExcludeList());
-    }
-
-    @Test
-    void supportsUnlockedReflectionResolutionTiersCyclingAndInPlaceSave(@TempDir Path tempDir) throws IOException {
-        assertEquals(1, new WaterShaderConfig().getReflectionResolution());
-        assertEquals(1, WaterShaderConfig.parse(new BufferedReader(new StringReader("reflection_resolution 1\n")), LOGGER).getReflectionResolution());
-        assertEquals(1, WaterShaderConfig.parse(new BufferedReader(new StringReader("reflection_resolution full\n")), LOGGER).getReflectionResolution());
-        assertEquals(1, WaterShaderConfig.parse(new BufferedReader(new StringReader("reflection_resolution 1/1\n")), LOGGER).getReflectionResolution());
-        assertEquals(2, WaterShaderConfig.parse(new BufferedReader(new StringReader("reflection_resolution half\n")), LOGGER).getReflectionResolution());
-        assertEquals(2, WaterShaderConfig.parse(new BufferedReader(new StringReader("reflection_resolution 2\n")), LOGGER).getReflectionResolution());
-        assertEquals(2, WaterShaderConfig.parse(new BufferedReader(new StringReader("reflection_resolution 1/2\n")), LOGGER).getReflectionResolution());
-        assertEquals(4, WaterShaderConfig.parse(new BufferedReader(new StringReader("reflection_resolution quarter\n")), LOGGER).getReflectionResolution());
-        assertEquals(4, WaterShaderConfig.parse(new BufferedReader(new StringReader("reflection_resolution 4\n")), LOGGER).getReflectionResolution());
-        assertEquals(4, WaterShaderConfig.parse(new BufferedReader(new StringReader("reflection_resolution 1/4\n")), LOGGER).getReflectionResolution());
-        assertEquals(4, WaterShaderConfig.parse(new BufferedReader(new StringReader("reflection_resolution 8\n")), LOGGER).getReflectionResolution());
-
-        WaterShaderConfig cfg = new WaterShaderConfig();
-        assertEquals("Full (1/1)", WaterShaderConfig.formatReflectionResolutionLabel(cfg.getReflectionResolution()));
-        assertEquals(2, cfg.cycleReflectionResolution());
-        assertEquals("Half (1/2)", WaterShaderConfig.formatReflectionResolutionLabel(cfg.getReflectionResolution()));
-        assertEquals(4, cfg.cycleReflectionResolution());
-        assertEquals("Quarter (1/4)", WaterShaderConfig.formatReflectionResolutionLabel(cfg.getReflectionResolution()));
-        assertEquals(1, cfg.cycleReflectionResolution());
-
-        // In-place save preserves comments and other custom keys while updating reflection_resolution
-        Path configPath = tempDir.resolve("watershader.txt");
-        Files.writeString(configPath, "// Custom user comment\nwater_mode 2\nreflection_resolution 1\nwater_color 0.1/0.4/0.3\n");
-        assertTrue(WaterShaderConfig.saveOption(configPath, "reflection_resolution", "2", LOGGER));
-        String savedText = Files.readString(configPath);
-        assertTrue(savedText.contains("// Custom user comment"));
-        assertTrue(savedText.contains("reflection_resolution 2"));
-        assertTrue(savedText.contains("water_color 0.1/0.4/0.3"));
-
-        WaterShaderConfig reloaded = WaterShaderConfig.loadOrCreate(configPath, LOGGER);
-        assertEquals(2, reloaded.getReflectionResolution());
-        assertArrayEquals(new float[]{0.1F, 0.4F, 0.3F}, reloaded.getWaterColor(), 1e-6F);
-    }
-
-    @Test
-    void defaultConfigTextOmitsDeadNoOpKeysAndDevHeaders() {
-        String text = WaterShaderConfig.defaultConfigText();
-        assertFalse(text.contains("ssr_enabled"));
-        assertFalse(text.contains("ssr_quality"));
-        assertFalse(text.contains("PHASE 6"));
-        assertTrue(text.contains("water_mode 2"));
-        assertTrue(text.contains("underwater_effect 1"));
-    }
-
-    private static void assertBeta173Defaults(WaterShaderConfig cfg) {
         assertEquals(2, cfg.getWaterMode());
         assertEquals(2, cfg.getAntiAliasing());
         assertEquals(1, cfg.getReflectionResolution());
@@ -184,10 +36,172 @@ class WaterShaderConfigTest {
         assertArrayEquals(new float[]{1.0F, 1.0F, 1.0F}, cfg.getWaterfallColor(), 1e-6F);
         assertTrue(cfg.isWaterfallFog());
         assertTrue(cfg.getExcludeList().isEmpty());
-        assertTrue(cfg.isSsrEnabled());
-        assertEquals(1, cfg.getSsrQuality());
         assertEquals(1.0F, cfg.getFresnelStrength(), 1e-6F);
         assertEquals(1.0F, cfg.getRippleStrength(), 1e-6F);
         assertTrue(cfg.isUnderwaterEffect());
+    }
+
+    @Test
+    void reflectsLiveCustomValuesAcrossAllCategories() {
+        WaterShaderGcapiConfig.ConfigFields raw = new WaterShaderGcapiConfig.ConfigFields();
+        raw.waterMode = WaterMode.REFRACTION_ONLY;
+        raw.reflectionResolution = ReflectionResolution.HALF;
+        raw.antiAliasing = 4;
+        raw.underwaterEffect = false;
+
+        raw.reflections.reflectiveItems = false;
+        raw.reflections.reflectPlayer = false;
+        raw.reflections.reflectiveClouds = true;
+        raw.reflections.fresnelStrength = 1.5F;
+        raw.reflections.rippleStrength = 0.75F;
+
+        raw.surface.renderV3 = false;
+        raw.surface.waterSurfaceTransparency = 0.25F;
+        raw.surface.waterfallTransparency = 0.6F;
+        raw.surface.waterfallFog = false;
+        raw.surface.excludeList = new String[]{"8", " 9, 79 ", "tile.water"};
+
+        raw.colors.waterColorR = 0.1F;
+        raw.colors.waterColorG = 0.2F;
+        raw.colors.waterColorB = 0.3F;
+        raw.colors.waterfallColorR = 0.8F;
+        raw.colors.waterfallColorG = 0.9F;
+        raw.colors.waterfallColorB = 1.0F;
+
+        WaterShaderConfig cfg = new WaterShaderConfig(raw);
+        assertEquals(1, cfg.getWaterMode());
+        assertEquals(4, cfg.getAntiAliasing());
+        assertEquals(2, cfg.getReflectionResolution());
+        assertFalse(cfg.isUnderwaterEffect());
+        assertFalse(cfg.isReflectiveItems());
+        assertTrue(cfg.isReflectiveClouds());
+        assertFalse(cfg.isReflectPlayer());
+        assertEquals(1.5F, cfg.getFresnelStrength(), 1e-6F);
+        assertEquals(0.75F, cfg.getRippleStrength(), 1e-6F);
+        assertFalse(cfg.isRenderV3());
+        assertEquals(0.0F, cfg.getRenderV3Float(), 1e-6F);
+        assertEquals(0.25F, cfg.getWaterSurfaceTransparency(), 1e-6F);
+        assertEquals(0.6F, cfg.getWaterfallTransparency(), 1e-6F);
+        assertFalse(cfg.isWaterfallFog());
+        assertEquals(List.of("8", "9", "79", "tile.water"), cfg.getExcludeList());
+        assertArrayEquals(new float[]{0.1F, 0.2F, 0.3F}, cfg.getWaterColor(), 1e-6F);
+        assertArrayEquals(new float[]{0.8F, 0.9F, 1.0F}, cfg.getWaterfallColor(), 1e-6F);
+    }
+
+    @Test
+    void clampsOutOfRangeNullAndNonFiniteValuesSafely() {
+        WaterShaderGcapiConfig.ConfigFields raw = new WaterShaderGcapiConfig.ConfigFields();
+        raw.waterMode = null;
+        raw.reflectionResolution = null;
+        raw.antiAliasing = 0;
+        raw.underwaterEffect = null;
+
+        raw.reflections.fresnelStrength = -5.0F;
+        raw.reflections.rippleStrength = Float.NaN;
+        raw.surface.waterSurfaceTransparency = -0.5F;
+        raw.surface.waterfallTransparency = 2.5F;
+        raw.surface.excludeList = new String[]{null, "   ", "8"};
+        raw.colors.waterColorR = Float.POSITIVE_INFINITY;
+        raw.colors.waterColorG = 5.0F;
+        raw.colors.waterColorB = -1.0F;
+        raw.colors.waterfallColorR = Float.NaN;
+
+        WaterShaderConfig cfg = new WaterShaderConfig(raw);
+        assertEquals(2, cfg.getWaterMode());
+        assertEquals(1, cfg.getReflectionResolution());
+        assertEquals(1, cfg.getAntiAliasing());
+        assertTrue(cfg.isUnderwaterEffect());
+        assertEquals(0.0F, cfg.getFresnelStrength(), 1e-6F);
+        assertEquals(1.0F, cfg.getRippleStrength(), 1e-6F);
+        assertEquals(0.0F, cfg.getWaterSurfaceTransparency(), 1e-6F);
+        assertEquals(1.0F, cfg.getWaterfallTransparency(), 1e-6F);
+        assertEquals(List.of("8"), cfg.getExcludeList());
+        assertArrayEquals(new float[]{0.0F, 2.0F, 0.0F}, cfg.getWaterColor(), 1e-6F);
+        assertArrayEquals(new float[]{1.0F, 1.0F, 1.0F}, cfg.getWaterfallColor(), 1e-6F);
+
+        raw.antiAliasing = 99;
+        assertEquals(4, cfg.getAntiAliasing());
+
+        raw.reflections = null;
+        raw.surface = null;
+        raw.colors = null;
+        assertTrue(cfg.isReflectiveItems());
+        assertTrue(cfg.isRenderV3());
+        assertArrayEquals(new float[]{0.0F, 0.5F, 0.35F}, cfg.getWaterColor(), 1e-6F);
+    }
+
+    @Test
+    void enumMappingAndYamlParsingCoverAllTiers() {
+        assertEquals(0, WaterMode.OFF.getModeId());
+        assertEquals(1, WaterMode.REFRACTION_ONLY.getModeId());
+        assertEquals(2, WaterMode.REFLECTION_AND_REFRACTION.getModeId());
+        assertEquals(0, WaterMode.ordinalFromYamlValue(-5, WaterMode.REFLECTION_AND_REFRACTION));
+        assertEquals(1, WaterMode.ordinalFromYamlValue(1, WaterMode.REFLECTION_AND_REFRACTION));
+        assertEquals(2, WaterMode.ordinalFromYamlValue(99, WaterMode.OFF));
+        assertEquals(1, WaterMode.ordinalFromYamlValue("refraction_only", WaterMode.OFF));
+        assertEquals(2, WaterMode.ordinalFromYamlValue("invalid", WaterMode.REFLECTION_AND_REFRACTION));
+
+        assertEquals(1, ReflectionResolution.FULL.getDivisor());
+        assertEquals(2, ReflectionResolution.HALF.getDivisor());
+        assertEquals(4, ReflectionResolution.QUARTER.getDivisor());
+        assertEquals(ReflectionResolution.FULL, ReflectionResolution.fromDivisor(1));
+        assertEquals(ReflectionResolution.HALF, ReflectionResolution.fromDivisor(2));
+        assertEquals(ReflectionResolution.QUARTER, ReflectionResolution.fromDivisor(4));
+        assertEquals(ReflectionResolution.QUARTER, ReflectionResolution.fromDivisor(8));
+        assertEquals(0, ReflectionResolution.ordinalFromYamlValue("full", ReflectionResolution.QUARTER));
+        assertEquals(1, ReflectionResolution.ordinalFromYamlValue("1/2", ReflectionResolution.FULL));
+        assertEquals(2, ReflectionResolution.ordinalFromYamlValue("quarter", ReflectionResolution.FULL));
+        assertEquals(2, ReflectionResolution.ordinalFromYamlValue(99, ReflectionResolution.FULL));
+    }
+
+    @Test
+    void gcapiAnnotationsBoxedTypesFactoriesAndChangeListenerAreValid() throws Exception {
+        Field rootField = WaterShaderGcapiConfig.class.getDeclaredField("CONFIG");
+        ConfigRoot rootAnnotation = rootField.getAnnotation(ConfigRoot.class);
+        assertNotNull(rootAnnotation);
+        assertEquals("config", rootAnnotation.value());
+        assertFalse(rootAnnotation.visibleName().isEmpty());
+
+        assertAllConfigFieldsAreNonPrimitive(WaterShaderGcapiConfig.ConfigFields.class);
+        assertAllConfigFieldsAreNonPrimitive(WaterShaderGcapiConfig.ReflectionsConfig.class);
+        assertAllConfigFieldsAreNonPrimitive(WaterShaderGcapiConfig.SurfaceConfig.class);
+        assertAllConfigFieldsAreNonPrimitive(WaterShaderGcapiConfig.ColorsConfig.class);
+
+        WaterShaderConfigFactories factories = new WaterShaderConfigFactories();
+        ImmutableMap.Builder<Type, SeptFunction<String, ConfigEntry, Field, Object, Boolean, Object, Object, ConfigEntryHandler<?>>> loadBuilder = ImmutableMap.builder();
+        ImmutableMap.Builder<Type, Function<Object, Object>> saveBuilder = ImmutableMap.builder();
+        factories.provideLoadFactories(loadBuilder);
+        factories.provideSaveFactories(saveBuilder);
+        assertTrue(loadBuilder.build().containsKey(WaterMode.class));
+        assertTrue(loadBuilder.build().containsKey(ReflectionResolution.class));
+        assertTrue(saveBuilder.build().containsKey(WaterMode.class));
+        assertTrue(saveBuilder.build().containsKey(ReflectionResolution.class));
+
+        AtomicInteger notifications = new AtomicInteger();
+        WaterShaderConfig.setChangeListener(notifications::incrementAndGet);
+        try {
+            WaterShaderConfigListener listener = new WaterShaderConfigListener();
+            listener.PostConfigLoaded(2);
+            listener.onPreConfigSaved(1, null, null);
+            assertEquals(2, notifications.get());
+        } finally {
+            WaterShaderConfig.setChangeListener(null);
+        }
+    }
+
+    private static void assertAllConfigFieldsAreNonPrimitive(Class<?> clazz) {
+        int annotatedCount = 0;
+        for (Field field : clazz.getDeclaredFields()) {
+            boolean isEntry = field.isAnnotationPresent(ConfigEntry.class);
+            boolean isCategory = field.isAnnotationPresent(ConfigCategory.class);
+            if (isEntry || isCategory) {
+                annotatedCount++;
+                assertFalse(
+                    field.getType().isPrimitive(),
+                    () -> "GCAPI 3 requires boxed types, not primitive on " + clazz.getSimpleName() + "." + field.getName()
+                );
+            }
+        }
+        assertTrue(annotatedCount > 0, () -> "Expected annotated GCAPI fields in " + clazz.getSimpleName());
     }
 }
