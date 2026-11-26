@@ -1,5 +1,6 @@
 package net.watershader.math;
 
+import net.watershader.config.BiomeTintMode;
 import net.watershader.render.ModernWeatherRenderer;
 import net.watershader.render.WaterShaderPipeline;
 import org.junit.jupiter.api.Test;
@@ -294,5 +295,54 @@ class WaterEnvironmentMathTest {
         assertTrue(WaterShaderPipeline.shouldRenderReflectedEntity(false, true, true));
         assertFalse(WaterShaderPipeline.shouldRenderReflectedEntity(true, false, false));
         assertFalse(WaterShaderPipeline.shouldRenderReflectedEntity(false, false, false));
+    }
+
+    @Test
+    void overworldCaveSkipAndOpticalV12HelpersBehaveCleanly() {
+        // Cave reflection skip: skips in Overworld caves when no sky-exposed water is visible
+        assertFalse(WaterEnvironmentMath.shouldExecuteReflectionPass(true, false, false, true, false));
+        assertTrue(WaterEnvironmentMath.shouldExecuteReflectionPass(true, false, false, true, true));
+        assertTrue(WaterEnvironmentMath.shouldExecuteReflectionPass(true, false, false, false, false));
+        assertFalse(WaterEnvironmentMath.shouldExecuteReflectionPass(false, false, false, false, true));
+        assertFalse(WaterEnvironmentMath.shouldExecuteReflectionPass(true, true, false, false, true));
+        assertFalse(WaterEnvironmentMath.shouldExecuteReflectionPass(true, false, true, false, true));
+
+        // Beer-Lambert depth transmittance & shoreline contact fade
+        assertEquals(1.0F, WaterEnvironmentMath.computeDepthTransmittance(0.0F, 1.0F), 1e-6F);
+        float shallow = WaterEnvironmentMath.computeDepthTransmittance(1.0F, 1.0F);
+        float medium = WaterEnvironmentMath.computeDepthTransmittance(4.0F, 1.0F);
+        float deep = WaterEnvironmentMath.computeDepthTransmittance(12.0F, 1.0F);
+        assertTrue(shallow > medium && medium > deep && deep > 0.0F);
+        assertEquals(0.0F, WaterEnvironmentMath.computeShorelineFade(0.0F), 1e-6F);
+        assertEquals(1.0F, WaterEnvironmentMath.computeShorelineFade(0.75F), 1e-6F);
+
+        // Horizon linear fog factor
+        assertEquals(0.0F, WaterEnvironmentMath.computeHorizonFogFactor(20.0F, 64.0F, 128.0F), 1e-6F);
+        assertEquals(0.5F, WaterEnvironmentMath.computeHorizonFogFactor(96.0F, 64.0F, 128.0F), 1e-5F);
+        assertEquals(1.0F, WaterEnvironmentMath.computeHorizonFogFactor(150.0F, 64.0F, 128.0F), 1e-6F);
+
+        // Biome water tint palettes and smooth transitions
+        float[] swamp = new float[3];
+        float[] rainforest = new float[3];
+        float[] tundra = new float[3];
+        BiomeWaterColorHelper.resolveBiomePaletteByName("Swampland", swamp);
+        BiomeWaterColorHelper.resolveBiomePaletteByName("Rainforest", rainforest);
+        BiomeWaterColorHelper.resolveBiomePaletteByName("Tundra", tundra);
+        assertTrue(swamp[0] > rainforest[0], "Swamp should be warmer/murkier olive than rainforest");
+        assertTrue(rainforest[1] > tundra[1], "Rainforest should be greener turquoise than cold tundra");
+        assertTrue(tundra[2] > tundra[1], "Tundra should lean cool steel-blue");
+
+        float[] blended = new float[3];
+        BiomeWaterColorHelper.blendWithBaseColor(0.0F, 0.5F, 0.35F, swamp[0], swamp[1], swamp[2], BiomeTintMode.OFF, blended);
+        assertArrayEquals(new float[]{0.0F, 0.5F, 0.35F}, blended, 1e-6F);
+
+        BiomeWaterColorHelper.blendWithBaseColor(0.0F, 0.5F, 0.35F, swamp[0], swamp[1], swamp[2], BiomeTintMode.VIVID, blended);
+        assertTrue(blended[0] > 0.08F && blended[1] < 0.42F);
+
+        float[] smoothed = new float[]{0.0F, 0.5F, 0.35F};
+        for (int i = 0; i < 60; i++) {
+            BiomeWaterColorHelper.stepSmoothedColor(smoothed, swamp, 0.05, false);
+        }
+        assertArrayEquals(swamp, smoothed, 1e-2F);
     }
 }

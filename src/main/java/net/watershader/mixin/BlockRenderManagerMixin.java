@@ -45,6 +45,9 @@ final class BlockRenderManagerMixin {
         boolean water = layer1 && block.material == Material.WATER && !WaterShaderPipeline.isBlockExcluded(block);
         this.watershader$waterSkyExposure = water ? watershader$sampleWaterSkyExposure(x, y, z) : 0.0F;
         WaterLayer1Capture.beginBlock(layer1, water, y);
+        if (water && this.watershader$waterSkyExposure > 0.01F) {
+            WaterLayer1Capture.markSkyExposedWater();
+        }
         if (layer1) {
             Tessellator.INSTANCE.normal(0.0F, 1.0F, 0.0F);
         }
@@ -81,6 +84,9 @@ final class BlockRenderManagerMixin {
         if (WaterLayer1Capture.isActiveWaterBlock()) {
             int by = WaterLayer1Capture.getActiveWaterBlockY();
             float skyExp = watershader$sampleCornerSkyExposure(vx, vz, by);
+            if (skyExp > 0.01F) {
+                WaterLayer1Capture.markSkyExposedWater();
+            }
             int bx = this.watershader$blockX;
             int bz = this.watershader$blockZ;
             boolean openStill = watershader$isOpenStillWater(bx, by, bz);

@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Loads, compiles, and manages the Water Shader GPU programs after the OpenGL context is created.
+ * Loads, compiles, and hot-reloads the Water Shader GPU programs after the OpenGL context is created.
  */
 public final class ShaderManager implements AutoCloseable {
     public static final List<String> REQUIRED_SHADERS = List.of(
@@ -33,20 +33,22 @@ public final class ShaderManager implements AutoCloseable {
 
     /**
      * Compiles all required Water Shader GLSL programs on the active OpenGL context.
+     * Stages newly compiled programs before swapping so live hot-reloads keep existing working
+     * shaders intact if a custom override contains a GLSL syntax error.
      */
     public boolean compileAll() {
-        close();
         String glVersion = GL11.glGetString(GL11.GL_VERSION);
         String glRenderer = GL11.glGetString(GL11.GL_RENDERER);
         String glVendor = GL11.glGetString(GL11.GL_VENDOR);
         logger.info("Initializing Water Shader programs on OpenGL '{}' ({} / {})", glVersion, glVendor, glRenderer);
 
+        Map<String, ShaderProgram> staged = new LinkedHashMap<>();
         boolean allSucceeded = true;
         for (String shaderName : REQUIRED_SHADERS) {
             try {
                 ShaderSourceLoader.LoadedShaderSource source = sourceLoader.load(shaderName);
                 ShaderProgram program = ShaderProgram.compile(source, logger);
-                programs.put(shaderName, program);
+                staged.put(shaderName, program);
                 logger.info(
                     "Compiled shader '{}' -> program={} (vert={}, frag={})",
                     shaderName,
@@ -60,13 +62,24 @@ public final class ShaderManager implements AutoCloseable {
             }
         }
 
-        ready = allSucceeded && programs.size() == REQUIRED_SHADERS.size();
-        if (ready) {
+        if (allSucceeded && staged.size() == REQUIRED_SHADERS.size()) {
+            close();
+            programs.putAll(staged);
+            ready = true;
             logger.info("All {} Water Shader programs compiled cleanly.", programs.size());
-        } else {
-            logger.error("Shader compilation finished with errors ({} / {} compiled).", programs.size(), REQUIRED_SHADERS.size());
+            return true;
         }
-        return ready;
+
+        for (ShaderProgram partial : staged.values()) {
+            partial.close();
+        }
+        if (ready && programs.size() == REQUIRED_SHADERS.size()) {
+            logger.error("Shader reload failed ({} / {} compiled); keeping previous active programs.", staged.size(), REQUIRED_SHADERS.size());
+        } else {
+            close();
+            logger.error("Shader compilation finished with errors ({} / {} compiled).", staged.size(), REQUIRED_SHADERS.size());
+        }
+        return false;
     }
 
     public boolean isReady() {

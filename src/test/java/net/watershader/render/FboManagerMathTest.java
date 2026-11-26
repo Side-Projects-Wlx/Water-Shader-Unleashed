@@ -59,4 +59,20 @@ class FboManagerMathTest {
         assertFalse(FboManager.isDepthCopyValid(true, 7, 0, 1080));
         assertFalse(FboManager.isDepthCopyValid(true, 7, 1920, -1));
     }
+
+    @Test
+    void stencilResolutionModeComputesMatchedOrNative1xDimensionsAndTriggersRecreate() {
+        FboManager.FboDimensions matched = FboManager.computeDimensions(1920, 1080, 2, 1, false, 16384);
+        assertEquals(3840, matched.stencilWidth());
+        assertEquals(2160, matched.stencilHeight());
+
+        FboManager.FboDimensions native1x = FboManager.computeDimensions(1920, 1080, 2, 1, true, 16384);
+        assertEquals(3840, native1x.colorWidth());
+        assertEquals(2160, native1x.colorHeight());
+        assertEquals(1920, native1x.stencilWidth());
+        assertEquals(1080, native1x.stencilHeight());
+
+        assertFalse(FboManager.needsRecreate(true, 1920, 1080, 2, 1, true, false, 1920, 1080, 2, 1, true, false));
+        assertTrue(FboManager.needsRecreate(true, 1920, 1080, 2, 1, true, false, 1920, 1080, 2, 1, true, true));
+    }
 }

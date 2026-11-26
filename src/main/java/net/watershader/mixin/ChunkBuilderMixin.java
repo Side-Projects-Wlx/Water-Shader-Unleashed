@@ -32,6 +32,9 @@ final class ChunkBuilderMixin implements WaterChunkAccess {
     @Unique
     private boolean watershader$hasWater = false;
 
+    @Unique
+    private boolean watershader$hasSkyExposedWater = false;
+
     @Override
     public WaterLayer1Mesh watershader$getLayer1Mesh() {
         return this.watershader$layer1Mesh;
@@ -60,6 +63,16 @@ final class ChunkBuilderMixin implements WaterChunkAccess {
         this.watershader$hasWater = hasWater;
     }
 
+    @Override
+    public boolean watershader$hasSkyExposedWater() {
+        return this.watershader$hasSkyExposedWater;
+    }
+
+    @Override
+    public void watershader$setHasSkyExposedWater(boolean hasSkyExposedWater) {
+        this.watershader$hasSkyExposedWater = hasSkyExposedWater;
+    }
+
     @Inject(method = "rebuild", at = @At("HEAD"))
     private void watershader$beginRebuild(CallbackInfo ci) {
         if (!this.dirty) {
@@ -68,6 +81,7 @@ final class ChunkBuilderMixin implements WaterChunkAccess {
         this.watershader$releaseLayer1Mesh();
         if (!WaterShaderPipeline.isConfiguredEnabled()) {
             this.watershader$hasWater = false;
+            this.watershader$hasSkyExposedWater = false;
             return;
         }
         WaterLayer1Capture.beginChunkRebuild(
@@ -81,6 +95,7 @@ final class ChunkBuilderMixin implements WaterChunkAccess {
     private void watershader$endRebuild(CallbackInfo ci) {
         if (WaterLayer1Capture.isRebuildingChunk()) {
             this.watershader$hasWater = WaterLayer1Capture.didChunkHaveWater();
+            this.watershader$hasSkyExposedWater = WaterLayer1Capture.didChunkHaveSkyExposedWater();
             this.watershader$layer1Mesh = WaterLayer1Capture.endChunkRebuild();
         }
     }
@@ -89,5 +104,6 @@ final class ChunkBuilderMixin implements WaterChunkAccess {
     private void watershader$onReset(CallbackInfo ci) {
         this.watershader$releaseLayer1Mesh();
         this.watershader$hasWater = false;
+        this.watershader$hasSkyExposedWater = false;
     }
 }

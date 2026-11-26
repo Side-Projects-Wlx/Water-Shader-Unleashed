@@ -254,6 +254,58 @@ public final class WaterEnvironmentMath {
         return camY < (double) computeFluidSurfaceY(blockY, meta, waterAbove);
     }
 
+    /**
+     * Determines whether Pass 2 ({@code REFLECTION}) should execute this frame, allowing safe
+     * skipping in Overworld caves when no sky-exposed water chunks are visible.
+     */
+    public static boolean shouldExecuteReflectionPass(
+            boolean withReflection,
+            boolean hasCeiling,
+            boolean debugStencilView,
+            boolean skipCaveReflections,
+            boolean skyExposedWaterVisible) {
+        if (!withReflection || hasCeiling || debugStencilView) {
+            return false;
+        }
+        return !skipCaveReflections || skyExposedWaterVisible;
+    }
+
+    /**
+     * Computes Beer-Lambert water transmittance {@code exp(-thickness * 0.24 * strength)} matching
+     * {@code water.frag}, returning {@code 1.0} at the shoreline and decaying smoothly in deep water.
+     */
+    public static float computeDepthTransmittance(float waterThicknessBlocks, float absorptionStrength) {
+        if (!Float.isFinite(waterThicknessBlocks) || !Float.isFinite(absorptionStrength)) {
+            return 1.0F;
+        }
+        float thickness = clamp(waterThicknessBlocks, 0.0F, 24.0F);
+        float strength = clamp(absorptionStrength, 0.0F, 3.0F);
+        return clamp01((float) Math.exp(-thickness * 0.24F * strength));
+    }
+
+    /**
+     * Computes shoreline edge feather {@code [0, 1]} over the first {@code 0.65} blocks of water
+     * thickness so refracted/reflected edges dissolve cleanly into sand/dirt shorelines.
+     */
+    public static float computeShorelineFade(float waterThicknessBlocks) {
+        if (!Float.isFinite(waterThicknessBlocks)) {
+            return 1.0F;
+        }
+        return smoothstep(0.0F, 0.65F, Math.max(0.0F, waterThicknessBlocks));
+    }
+
+    /**
+     * Computes linear distance fog blend {@code [0, 1]} matching Minecraft's {@code GL_LINEAR} fog
+     * range {@code [fogStart, fogEnd]}.
+     */
+    public static float computeHorizonFogFactor(float surfaceDist, float fogStart, float fogEnd) {
+        if (!Float.isFinite(surfaceDist) || !Float.isFinite(fogStart) || !Float.isFinite(fogEnd)) {
+            return 0.0F;
+        }
+        float span = Math.max(0.001F, fogEnd - fogStart);
+        return clamp01((surfaceDist - fogStart) / span);
+    }
+
     public static float smoothstep(float edge0, float edge1, float x) {
         float t = clamp01((x - edge0) / (edge1 - edge0));
         return t * t * (3.0F - 2.0F * t);

@@ -85,4 +85,15 @@ public final class WaterShaderClient implements ClientModInitializer {
     public static ShaderManager getShaderManager() {
         return shaderManager;
     }
+
+    /**
+     * Hot-reloads all GLSL programs from {@code config/watershader/shaders/} (or bundled resources)
+     * on the active OpenGL thread. Keeps existing working shaders active if compilation fails.
+     */
+    public static boolean reloadShaders() {
+        if (!glInitialized || shaderManager == null) {
+            return false;
+        }
+        return shaderManager.compileAll();
+    }
 }

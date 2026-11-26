@@ -9,6 +9,7 @@ uniform float waterfall_fog;
 uniform float setting_v3;
 uniform float env_sky_light;
 uniform float still_refl_enabled;
+uniform float modern_cave_water;
 varying vec4 texcoord;
 varying vec4 vert_color;
 varying float is_vertical;
@@ -45,15 +46,16 @@ void main()
         // Shift outdoor flowing water away from cobalt-purple toward the still water's teal-aqua palette
         float lum = dot(baseRgb, vec3(0.299, 0.587, 0.114));
         vec3 tealHarmonized = mix(baseRgb, lum * (vec3(0.42, 0.62, 0.58) + 0.45 * water_color), 0.65);
+
+        float modernCaveMask = caveMask * clamp(modern_cave_water, 0.0, 1.0);
         // Replace the blocky 16x16 vanilla water texture on cave/enclosed static water with a smooth,
-        // pixel-free vertex-lit aqua surface, and match cave flowing water to the exact same aqua-teal
-        // palette while preserving soft moving flow-streak variation.
+        // pixel-free vertex-lit aqua surface when modern cave water is enabled, matching cave flowing water.
         vec3 smoothCaveRgb = vert_color.rgb * (vec3(0.11, 0.17, 0.25) + 0.34 * water_color);
         float texLum = dot(color.rgb, vec3(0.299, 0.587, 0.114));
         float flowDetail = clamp(mix(1.0, texLum / 0.33, 0.55), 0.72, 1.30);
         vec3 caveFlowRgb = smoothCaveRgb * flowDetail;
-        vec3 tintedFlow = mix(tealHarmonized, caveFlowRgb, caveMask) * waterfall_color;
-        vec3 stillRgb = mix(tealHarmonized, smoothCaveRgb, caveMask);
+        vec3 tintedFlow = mix(tealHarmonized, caveFlowRgb, modernCaveMask) * waterfall_color;
+        vec3 stillRgb = mix(tealHarmonized, smoothCaveRgb, modernCaveMask);
 
         vec3 waterRgb = mix(tintedFlow, stillRgb, stillW);
         float surfaceFogWeight = max(1.0 - stillW, caveMask) * clamp(waterfall_fog, 0.0, 1.0);

@@ -22,16 +22,26 @@ class WaterShaderConfigTest {
         WaterShaderGcapiConfig.ConfigFields raw = new WaterShaderGcapiConfig.ConfigFields();
         WaterShaderConfig cfg = new WaterShaderConfig(raw);
 
+        assertEquals(WaterPreset.CUSTOM, cfg.getWaterPreset());
         assertEquals(2, cfg.getWaterMode());
         assertEquals(2, cfg.getAntiAliasing());
         assertEquals(1, cfg.getReflectionResolution());
+        assertTrue(cfg.isFastStencilDepthBlit());
+        assertTrue(cfg.isSkipCaveReflections());
+        assertFalse(cfg.isStencilNative1x());
         assertTrue(cfg.isReflectiveItems());
         assertFalse(cfg.isReflectiveClouds());
         assertTrue(cfg.isReflectPlayer());
+        assertTrue(cfg.isRainRipples());
         assertTrue(cfg.isRenderV3());
         assertEquals(1.0F, cfg.getRenderV3Float(), 1e-6F);
         assertEquals(0.1F, cfg.getWaterSurfaceTransparency(), 1e-6F);
         assertEquals(0.35F, cfg.getWaterfallTransparency(), 1e-6F);
+        assertTrue(cfg.isDepthAbsorption());
+        assertEquals(1.0F, cfg.getDepthAbsorptionStrength(), 1e-6F);
+        assertTrue(cfg.isHorizonFogFade());
+        assertTrue(cfg.isModernCaveWater());
+        assertEquals(BiomeTintMode.OFF, cfg.getBiomeTintMode());
         assertArrayEquals(new float[]{0.0F, 0.5F, 0.35F}, cfg.getWaterColor(), 1e-6F);
         assertArrayEquals(new float[]{1.0F, 1.0F, 1.0F}, cfg.getWaterfallColor(), 1e-6F);
         assertTrue(cfg.isWaterfallFog());
@@ -155,6 +165,52 @@ class WaterShaderConfigTest {
     }
 
     @Test
+    void waterPresetsApplyCuratedProfilesWithoutDestroyingCustomSettings() {
+        WaterShaderGcapiConfig.ConfigFields raw = new WaterShaderGcapiConfig.ConfigFields();
+        raw.antiAliasing = 3;
+        raw.colors.waterColorR = 0.25F;
+        raw.colors.biomeTintMode = BiomeTintMode.VIVID;
+        WaterShaderConfig cfg = new WaterShaderConfig(raw);
+
+        // Classic v4c disables modern depth/fog/cave/rain-ripples/biome-tint
+        raw.waterPreset = WaterPreset.CLASSIC_V4C;
+        assertFalse(cfg.isDepthAbsorption());
+        assertFalse(cfg.isHorizonFogFade());
+        assertFalse(cfg.isModernCaveWater());
+        assertFalse(cfg.isRainRipples());
+        assertEquals(BiomeTintMode.OFF, cfg.getBiomeTintMode());
+        assertEquals(0.0F, cfg.getWaterColorR(), 1e-6F);
+
+        // Modern Balanced enables full visual suite + subtle biome tinting
+        raw.waterPreset = WaterPreset.MODERN_BALANCED;
+        assertTrue(cfg.isDepthAbsorption());
+        assertTrue(cfg.isHorizonFogFade());
+        assertTrue(cfg.isModernCaveWater());
+        assertEquals(BiomeTintMode.SUBTLE, cfg.getBiomeTintMode());
+
+        // Crystal Tropical uses clearer tropical turquoise palette
+        raw.waterPreset = WaterPreset.CRYSTAL_TROPICAL;
+        assertEquals(0.64F, cfg.getWaterColorG(), 1e-6F);
+        assertEquals(0.56F, cfg.getWaterColorB(), 1e-6F);
+        assertEquals(0.72F, cfg.getDepthAbsorptionStrength(), 1e-6F);
+
+        // Performance drops AA to 1x, reflections to Half, stencil to Native 1x
+        raw.waterPreset = WaterPreset.PERFORMANCE;
+        assertEquals(1, cfg.getAntiAliasing());
+        assertEquals(2, cfg.getReflectionResolution());
+        assertTrue(cfg.isStencilNative1x());
+        assertTrue(cfg.isFastStencilDepthBlit());
+        assertTrue(cfg.isSkipCaveReflections());
+        assertFalse(cfg.isReflectiveItems());
+
+        // Switching back to Custom restores user settings intact
+        raw.waterPreset = WaterPreset.CUSTOM;
+        assertEquals(3, cfg.getAntiAliasing());
+        assertEquals(0.25F, cfg.getWaterColorR(), 1e-6F);
+        assertEquals(BiomeTintMode.VIVID, cfg.getBiomeTintMode());
+    }
+
+    @Test
     void gcapiAnnotationsBoxedTypesFactoriesAndChangeListenerAreValid() throws Exception {
         Field rootField = WaterShaderGcapiConfig.class.getDeclaredField("CONFIG");
         ConfigRoot rootAnnotation = rootField.getAnnotation(ConfigRoot.class);
@@ -163,6 +219,7 @@ class WaterShaderConfigTest {
         assertFalse(rootAnnotation.visibleName().isEmpty());
 
         assertAllConfigFieldsAreNonPrimitive(WaterShaderGcapiConfig.ConfigFields.class);
+        assertAllConfigFieldsAreNonPrimitive(WaterShaderGcapiConfig.PerformanceConfig.class);
         assertAllConfigFieldsAreNonPrimitive(WaterShaderGcapiConfig.ReflectionsConfig.class);
         assertAllConfigFieldsAreNonPrimitive(WaterShaderGcapiConfig.SurfaceConfig.class);
         assertAllConfigFieldsAreNonPrimitive(WaterShaderGcapiConfig.ColorsConfig.class);
@@ -172,10 +229,22 @@ class WaterShaderConfigTest {
         ImmutableMap.Builder<Type, Function<Object, Object>> saveBuilder = ImmutableMap.builder();
         factories.provideLoadFactories(loadBuilder);
         factories.provideSaveFactories(saveBuilder);
-        assertTrue(loadBuilder.build().containsKey(WaterMode.class));
-        assertTrue(loadBuilder.build().containsKey(ReflectionResolution.class));
-        assertTrue(saveBuilder.build().containsKey(WaterMode.class));
-        assertTrue(saveBuilder.build().containsKey(ReflectionResolution.class));
+        var loadMap = loadBuilder.build();
+        var saveMap = saveBuilder.build();
+        assertTrue(loadMap.containsKey(WaterPreset.class));
+        assertTrue(loadMap.containsKey(WaterMode.class));
+        assertTrue(loadMap.containsKey(ReflectionResolution.class));
+        assertTrue(loadMap.containsKey(StencilResolution.class));
+        assertTrue(loadMap.containsKey(BiomeTintMode.class));
+        assertTrue(saveMap.containsKey(WaterPreset.class));
+        assertTrue(saveMap.containsKey(WaterMode.class));
+        assertTrue(saveMap.containsKey(ReflectionResolution.class));
+        assertTrue(saveMap.containsKey(StencilResolution.class));
+        assertTrue(saveMap.containsKey(BiomeTintMode.class));
+
+        assertEquals(4, WaterPreset.ordinalFromYamlValue("performance", WaterPreset.CUSTOM));
+        assertEquals(1, StencilResolution.ordinalFromYamlValue("1x", StencilResolution.MATCH_MAIN));
+        assertEquals(2, BiomeTintMode.ordinalFromYamlValue("vivid", BiomeTintMode.OFF));
 
         AtomicInteger notifications = new AtomicInteger();
         WaterShaderConfig.setChangeListener(notifications::incrementAndGet);

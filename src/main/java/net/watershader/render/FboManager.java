@@ -26,7 +26,16 @@ public final class FboManager {
     /**
      * Pure computed target dimensions for the shader FBOs.
      */
-    public record FboDimensions(int colorWidth, int colorHeight, int reflectionWidth, int reflectionHeight) {
+    public record FboDimensions(
+            int colorWidth,
+            int colorHeight,
+            int stencilWidth,
+            int stencilHeight,
+            int reflectionWidth,
+            int reflectionHeight) {
+        public FboDimensions(int colorWidth, int colorHeight, int reflectionWidth, int reflectionHeight) {
+            this(colorWidth, colorHeight, colorWidth, colorHeight, reflectionWidth, reflectionHeight);
+        }
     }
 
     private static final class FboTarget {
@@ -53,6 +62,7 @@ public final class FboManager {
     private boolean capOpenGL14 = false;
     private boolean capArbShadow = false;
     private boolean capArbMirroredRepeat = false;
+    private boolean capFramebufferBlit = false;
 
     private int dummyBlackTexId = 0;
     private int dummyTransparentTexId = 0;
@@ -60,6 +70,7 @@ public final class FboManager {
     private int weatherTexId = 0;
     private int rainStreakTexId = 0;
     private int rainSplashTexId = 0;
+    private int seabedDepthTexId = 0;
     private int waterDepthTexId = 0;
     private int handDepthTexId = 0;
     private int mainDepthFormat = GL14.GL_DEPTH_COMPONENT24;
@@ -69,6 +80,7 @@ public final class FboManager {
     private int lastAa = -1;
     private int lastReflDiv = -1;
     private boolean lastWithReflection = false;
+    private boolean lastStencilNative1x = false;
 
     public FboManager(Logger logger) {
         this.logger = logger;
@@ -79,6 +91,16 @@ public final class FboManager {
             int displayHeight,
             int antiAliasing,
             int reflectionDivisor,
+            int maxTextureSize) {
+        return computeDimensions(displayWidth, displayHeight, antiAliasing, reflectionDivisor, false, maxTextureSize);
+    }
+
+    public static FboDimensions computeDimensions(
+            int displayWidth,
+            int displayHeight,
+            int antiAliasing,
+            int reflectionDivisor,
+            boolean stencilNative1x,
             int maxTextureSize) {
         int safeW = Math.max(1, displayWidth);
         int safeH = Math.max(1, displayHeight);
@@ -93,6 +115,14 @@ public final class FboManager {
             rawColorH = Math.max(1L, (long) Math.floor(rawColorH * scale));
         }
 
+        long rawStencilW = stencilNative1x ? safeW : rawColorW;
+        long rawStencilH = stencilNative1x ? safeH : rawColorH;
+        if (maxTextureSize > 0 && (rawStencilW > maxTextureSize || rawStencilH > maxTextureSize)) {
+            double scale = Math.min((double) maxTextureSize / rawStencilW, (double) maxTextureSize / rawStencilH);
+            rawStencilW = Math.max(1L, (long) Math.floor(rawStencilW * scale));
+            rawStencilH = Math.max(1L, (long) Math.floor(rawStencilH * scale));
+        }
+
         long rawReflW = Math.max(1L, safeW / safeDiv);
         long rawReflH = Math.max(1L, safeH / safeDiv);
         if (maxTextureSize > 0 && (rawReflW > maxTextureSize || rawReflH > maxTextureSize)) {
@@ -104,6 +134,8 @@ public final class FboManager {
         return new FboDimensions(
                 (int) rawColorW,
                 (int) rawColorH,
+                (int) rawStencilW,
+                (int) rawStencilH,
                 (int) rawReflW,
                 (int) rawReflH);
     }
@@ -120,12 +152,43 @@ public final class FboManager {
             int newAa,
             int newReflDiv,
             boolean newWithReflection) {
+        return needsRecreate(
+                currentlyValid,
+                prevDisplayW,
+                prevDisplayH,
+                prevAa,
+                prevReflDiv,
+                prevWithReflection,
+                false,
+                newDisplayW,
+                newDisplayH,
+                newAa,
+                newReflDiv,
+                newWithReflection,
+                false);
+    }
+
+    public static boolean needsRecreate(
+            boolean currentlyValid,
+            int prevDisplayW,
+            int prevDisplayH,
+            int prevAa,
+            int prevReflDiv,
+            boolean prevWithReflection,
+            boolean prevStencilNative1x,
+            int newDisplayW,
+            int newDisplayH,
+            int newAa,
+            int newReflDiv,
+            boolean newWithReflection,
+            boolean newStencilNative1x) {
         return !currentlyValid
                 || prevDisplayW != newDisplayW
                 || prevDisplayH != newDisplayH
                 || prevAa != newAa
                 || prevReflDiv != newReflDiv
-                || prevWithReflection != newWithReflection;
+                || prevWithReflection != newWithReflection
+                || prevStencilNative1x != newStencilNative1x;
     }
 
     public static boolean isDepthCopyValid(boolean fboValid, int texId, int width, int height) {
@@ -143,6 +206,16 @@ public final class FboManager {
             int antiAliasing,
             int reflectionDivisor,
             boolean withReflection) {
+        return ensureReady(displayWidth, displayHeight, antiAliasing, reflectionDivisor, withReflection, false);
+    }
+
+    public boolean ensureReady(
+            int displayWidth,
+            int displayHeight,
+            int antiAliasing,
+            int reflectionDivisor,
+            boolean withReflection,
+            boolean stencilNative1x) {
         int safeAa = Math.max(1, antiAliasing);
         int safeDiv = Math.max(1, reflectionDivisor);
         if (!needsRecreate(
@@ -152,11 +225,13 @@ public final class FboManager {
                 this.lastAa,
                 this.lastReflDiv,
                 this.lastWithReflection,
+                this.lastStencilNative1x,
                 displayWidth,
                 displayHeight,
                 safeAa,
                 safeDiv,
-                withReflection)) {
+                withReflection,
+                stencilNative1x)) {
             return true;
         }
 
@@ -176,10 +251,11 @@ public final class FboManager {
         ensureRainSplashTexture();
 
         int maxTex = GL11.glGetInteger(GL11.GL_MAX_TEXTURE_SIZE);
-        FboDimensions dims = computeDimensions(displayWidth, displayHeight, safeAa, safeDiv, maxTex);
+        FboDimensions dims = computeDimensions(
+                displayWidth, displayHeight, safeAa, safeDiv, stencilNative1x, maxTex);
 
         boolean ok = createTarget(this.mainTarget, dims.colorWidth(), dims.colorHeight(), "main_color", true)
-                && createTarget(this.stencilTarget, dims.colorWidth(), dims.colorHeight(), "water_stencil", false)
+                && createTarget(this.stencilTarget, dims.stencilWidth(), dims.stencilHeight(), "water_stencil", false)
                 && (!withReflection || createTarget(
                 this.reflectionTarget,
                 dims.reflectionWidth(),
@@ -189,9 +265,13 @@ public final class FboManager {
 
         if (ok) {
             this.weatherTexId = createWeatherColorTexture(dims.colorWidth(), dims.colorHeight());
+            this.seabedDepthTexId = createDepthTexture(dims.colorWidth(), dims.colorHeight());
             this.waterDepthTexId = createDepthTexture(dims.colorWidth(), dims.colorHeight());
             this.handDepthTexId = createDepthTexture(dims.colorWidth(), dims.colorHeight());
-            if (this.weatherTexId == 0 || this.waterDepthTexId == 0 || this.handDepthTexId == 0) {
+            if (this.weatherTexId == 0
+                    || this.seabedDepthTexId == 0
+                    || this.waterDepthTexId == 0
+                    || this.handDepthTexId == 0) {
                 this.logger.error("[WaterShader] Failed to allocate weather/depth textures ({}x{})", dims.colorWidth(), dims.colorHeight());
                 ok = false;
             } else {
@@ -222,6 +302,7 @@ public final class FboManager {
         this.lastAa = safeAa;
         this.lastReflDiv = safeDiv;
         this.lastWithReflection = withReflection;
+        this.lastStencilNative1x = stencilNative1x;
         this.valid = true;
         return true;
     }
@@ -293,12 +374,20 @@ public final class FboManager {
         return this.rainSplashTexId;
     }
 
+    public int getSeabedDepthTexture() {
+        return this.seabedDepthTexId != 0 ? this.seabedDepthTexId : getDummyDepthTexture();
+    }
+
     public int getWaterDepthTexture() {
         return this.waterDepthTexId != 0 ? this.waterDepthTexId : getDummyDepthTexture();
     }
 
     public int getHandDepthTexture() {
         return this.handDepthTexId != 0 ? this.handDepthTexId : getDummyDepthTexture();
+    }
+
+    public boolean supportsDepthBlit() {
+        return this.capFramebufferBlit;
     }
 
     public boolean beginWeatherPass() {
@@ -324,12 +413,49 @@ public final class FboManager {
         GL11.glViewport(0, 0, this.mainTarget.width, this.mainTarget.height);
     }
 
+    public void copyMainDepthToSeabed() {
+        copyBoundDepthTo(this.seabedDepthTexId, this.mainTarget.width, this.mainTarget.height);
+    }
+
     public void copyMainDepthToWater() {
         copyBoundDepthTo(this.waterDepthTexId, this.mainTarget.width, this.mainTarget.height);
     }
 
     public void copyMainDepthToHand() {
         copyBoundDepthTo(this.handDepthTexId, this.mainTarget.width, this.mainTarget.height);
+    }
+
+    /**
+     * Blits {@code mainTarget}'s depth buffer (opaque Layer 0 terrain + entities before Layer 1)
+     * directly into {@code stencilTarget}'s depth renderbuffer so Pass 1 can skip redrawing
+     * opaque world geometry and entities. Restores {@code mainTarget} as the active framebuffer.
+     */
+    public boolean blitMainDepthToStencil() {
+        if (!this.valid
+                || !this.capFramebufferBlit
+                || !this.mainTarget.isAllocated()
+                || !this.stencilTarget.isAllocated()) {
+            return false;
+        }
+        boolean scissorWasEnabled = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
+        if (scissorWasEnabled) {
+            GL11.glDisable(GL11.GL_SCISSOR_TEST);
+        }
+        try {
+            glBlitDepth(
+                    this.mainTarget.fboId,
+                    this.mainTarget.width,
+                    this.mainTarget.height,
+                    this.stencilTarget.fboId,
+                    this.stencilTarget.width,
+                    this.stencilTarget.height);
+            return true;
+        } finally {
+            bindTarget(this.mainTarget);
+            if (scissorWasEnabled) {
+                GL11.glEnable(GL11.GL_SCISSOR_TEST);
+            }
+        }
     }
 
     private void copyBoundDepthTo(int texId, int width, int height) {
@@ -396,6 +522,7 @@ public final class FboManager {
         this.lastAa = -1;
         this.lastReflDiv = -1;
         this.lastWithReflection = false;
+        this.lastStencilNative1x = false;
         this.valid = false;
     }
 
@@ -407,16 +534,23 @@ public final class FboManager {
         this.capArbMirroredRepeat = caps != null && caps.GL_ARB_texture_mirrored_repeat;
         if (caps != null && caps.OpenGL30) {
             this.backend = Backend.GL30_CORE;
+            this.capFramebufferBlit = true;
         } else if (caps != null && caps.GL_ARB_framebuffer_object) {
             this.backend = Backend.ARB;
+            this.capFramebufferBlit = true;
         } else if (caps != null && caps.GL_EXT_framebuffer_object) {
             this.backend = Backend.EXT;
+            this.capFramebufferBlit = caps.GL_EXT_framebuffer_blit;
         } else {
             this.backend = Backend.UNSUPPORTED;
+            this.capFramebufferBlit = false;
             this.logger.error("[WaterShader] No framebuffer object support detected (GL30/ARB_fbo/EXT_fbo missing)");
         }
         if (this.backend != Backend.UNSUPPORTED) {
-            this.logger.info("[WaterShader] Using FBO backend: {}", this.backend);
+            this.logger.info(
+                    "[WaterShader] Using FBO backend: {} (depthBlit={})",
+                    this.backend,
+                    this.capFramebufferBlit);
         }
     }
 
@@ -676,6 +810,10 @@ public final class FboManager {
             GL11.glDeleteTextures(this.weatherTexId);
             this.weatherTexId = 0;
         }
+        if (this.seabedDepthTexId != 0) {
+            GL11.glDeleteTextures(this.seabedDepthTexId);
+            this.seabedDepthTexId = 0;
+        }
         if (this.waterDepthTexId != 0) {
             GL11.glDeleteTextures(this.waterDepthTexId);
             this.waterDepthTexId = 0;
@@ -829,6 +967,40 @@ public final class FboManager {
             case EXT -> EXTFramebufferObject.glCheckFramebufferStatusEXT(EXTFramebufferObject.GL_FRAMEBUFFER_EXT);
             case UNSUPPORTED -> 0;
         };
+    }
+
+    private void glBlitDepth(int srcFbo, int srcW, int srcH, int dstFbo, int dstW, int dstH) {
+        switch (this.backend) {
+            case GL30_CORE -> {
+                GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, srcFbo);
+                GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, dstFbo);
+                GL30.glBlitFramebuffer(
+                        0, 0, srcW, srcH,
+                        0, 0, dstW, dstH,
+                        GL11.GL_DEPTH_BUFFER_BIT,
+                        GL11.GL_NEAREST);
+            }
+            case ARB -> {
+                ARBFramebufferObject.glBindFramebuffer(ARBFramebufferObject.GL_READ_FRAMEBUFFER, srcFbo);
+                ARBFramebufferObject.glBindFramebuffer(ARBFramebufferObject.GL_DRAW_FRAMEBUFFER, dstFbo);
+                ARBFramebufferObject.glBlitFramebuffer(
+                        0, 0, srcW, srcH,
+                        0, 0, dstW, dstH,
+                        GL11.GL_DEPTH_BUFFER_BIT,
+                        GL11.GL_NEAREST);
+            }
+            case EXT -> {
+                EXTFramebufferObject.glBindFramebufferEXT(EXTFramebufferBlit.GL_READ_FRAMEBUFFER_EXT, srcFbo);
+                EXTFramebufferObject.glBindFramebufferEXT(EXTFramebufferBlit.GL_DRAW_FRAMEBUFFER_EXT, dstFbo);
+                EXTFramebufferBlit.glBlitFramebufferEXT(
+                        0, 0, srcW, srcH,
+                        0, 0, dstW, dstH,
+                        GL11.GL_DEPTH_BUFFER_BIT,
+                        GL11.GL_NEAREST);
+            }
+            case UNSUPPORTED -> {
+            }
+        }
     }
 
     private int completeStatusConstant() {

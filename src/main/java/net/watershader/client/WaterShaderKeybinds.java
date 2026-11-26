@@ -10,18 +10,21 @@ import net.watershader.render.WaterShaderPipeline;
 import org.lwjgl.input.Keyboard;
 
 /**
- * StationAPI client event listener registering the F9 Water Shader quick toggle and an unbound
- * (assignable in Controls) stencil debug toggle.
+ * StationAPI client event listener registering the F9 Water Shader quick toggle plus unbound
+ * (assignable in Controls) stencil debug and live GLSL hot-reload keybinds.
  */
 public final class WaterShaderKeybinds {
     private static KeyBinding toggleShaderKey;
+    private static KeyBinding reloadShadersKey;
     private static KeyBinding debugStencilKey;
 
     @EventListener
     public void registerKeyBindings(KeyBindingRegisterEvent event) {
         toggleShaderKey = new KeyBinding("Toggle Water Shader", Keyboard.KEY_F9);
+        reloadShadersKey = new KeyBinding("Reload Water Shaders", Keyboard.KEY_NONE);
         debugStencilKey = new KeyBinding("Water Stencil Debug", Keyboard.KEY_NONE);
         event.register(toggleShaderKey);
+        event.register(reloadShadersKey);
         event.register(debugStencilKey);
     }
 
@@ -47,6 +50,16 @@ public final class WaterShaderKeybinds {
             WaterShaderClient.LOGGER.info("[WaterShader] Water Shader toggled: {}", enabled ? "ON" : "OFF");
             if (mc != null && mc.inGameHud != null) {
                 mc.inGameHud.addChatMessage("[WaterShader] Water Shader: " + (enabled ? "ON" : "OFF"));
+            }
+            return;
+        }
+        if (reloadShadersKey != null && reloadShadersKey.code != Keyboard.KEY_NONE && key == reloadShadersKey.code) {
+            boolean ok = WaterShaderClient.reloadShaders();
+            WaterShaderClient.LOGGER.info("[WaterShader] Live shader hot-reload: {}", ok ? "SUCCESS" : "FAILED");
+            if (mc != null && mc.inGameHud != null) {
+                mc.inGameHud.addChatMessage(ok
+                    ? "[WaterShader] Reloaded all 4 shaders cleanly."
+                    : "[WaterShader] Shader reload failed — kept previous shaders (see log).");
             }
             return;
         }

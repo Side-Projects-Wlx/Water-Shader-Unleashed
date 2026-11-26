@@ -35,12 +35,20 @@ final class WorldRendererMixin {
     @Inject(method = "renderLastChunks", at = @At("HEAD"), cancellable = true)
     private void watershader$beforeRenderLastChunks(int renderPass, double delta, CallbackInfo ci) {
         if (renderPass == 1 && this.chunksInCurrentLayer != null) {
+            boolean foundWater = false;
+            boolean foundSkyExposed = false;
             for (int i = 0, count = this.chunksInCurrentLayer.size(); i < count; i++) {
                 Object entry = this.chunksInCurrentLayer.get(i);
                 if (entry instanceof WaterChunkAccess access && access.watershader$hasWater()) {
-                    WaterShaderPipeline.markWaterVisibleThisPass();
-                    break;
+                    foundWater = true;
+                    if (access.watershader$hasSkyExposedWater()) {
+                        foundSkyExposed = true;
+                        break;
+                    }
                 }
+            }
+            if (foundWater) {
+                WaterShaderPipeline.markWaterVisibleThisPass(foundSkyExposed);
             }
         }
         boolean customLayer1 = WaterShaderPipeline.onWorldRenderLastChunksBegin(renderPass);

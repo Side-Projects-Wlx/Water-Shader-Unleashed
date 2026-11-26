@@ -237,8 +237,14 @@ final class GameRendererMixin {
             LivingEntity camera,
             int renderPass,
             double tickDelta) {
-        if (renderPass == 1 && !WaterShaderPipeline.shouldRenderLayer1()) {
+        if (renderPass == 0 && WaterShaderPipeline.shouldSkipLayer0InCurrentPass()) {
             return 0;
+        }
+        if (renderPass == 1) {
+            if (!WaterShaderPipeline.shouldRenderLayer1()) {
+                return 0;
+            }
+            WaterShaderPipeline.onBeforeLayer1();
         }
         return worldRenderer.render(camera, renderPass, tickDelta);
     }

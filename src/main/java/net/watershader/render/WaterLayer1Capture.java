@@ -19,6 +19,7 @@ public final class WaterLayer1Capture {
     private static boolean activeLayer1Block = false;
     private static boolean activeWaterBlock = false;
     private static boolean chunkHasWater = false;
+    private static boolean chunkHasSkyExposedWater = false;
     private static int activeWaterBlockY = 0;
 
     private static int chunkOriginX = 0;
@@ -53,6 +54,7 @@ public final class WaterLayer1Capture {
         activeLayer1Block = false;
         activeWaterBlock = false;
         chunkHasWater = false;
+        chunkHasSkyExposedWater = false;
         activeWaterBlockY = 0;
         chunkOriginX = originX;
         chunkOriginY = originY;
@@ -127,6 +129,16 @@ public final class WaterLayer1Capture {
 
     public static boolean didChunkHaveWater() {
         return chunkHasWater;
+    }
+
+    public static void markSkyExposedWater() {
+        if (rebuildingChunk && activeWaterBlock) {
+            chunkHasSkyExposedWater = true;
+        }
+    }
+
+    public static boolean didChunkHaveSkyExposedWater() {
+        return chunkHasSkyExposedWater;
     }
 
     public static void endBlock() {

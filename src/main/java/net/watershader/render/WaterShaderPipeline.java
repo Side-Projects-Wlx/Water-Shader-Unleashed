@@ -11,7 +11,9 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.LightType;
 import net.minecraft.world.World;
 import net.watershader.WaterShaderClient;
+import net.watershader.config.BiomeTintMode;
 import net.watershader.config.WaterShaderConfig;
+import net.watershader.math.BiomeWaterColorHelper;
 import net.watershader.math.ReflectionMath;
 import net.watershader.math.WaterEnvironmentMath;
 import net.watershader.math.WaterPlaneFinder;
@@ -62,8 +64,11 @@ public final class WaterShaderPipeline {
     private static double lastFrameDtSeconds = 1.0 / 60.0;
     private static float shaderTimer = 0.0F;
     private static boolean waterVisibleInMainPass = false;
+    private static boolean skyExposedWaterVisibleInMainPass = false;
     private static boolean skippedWaterPassesThisFrame = false;
     private static boolean reflectionRenderedThisFrame = false;
+    private static boolean seabedDepthCopiedThisFrame = false;
+    private static boolean stencilDepthBlittedThisFrame = false;
     private static boolean waterDepthCopiedThisFrame = false;
     private static boolean handDepthCopiedThisFrame = false;
     private static boolean weatherRenderedThisFrame = false;
@@ -75,6 +80,7 @@ public final class WaterShaderPipeline {
 
     private static final FloatBuffer MATRIX_READ_BUF = BufferUtils.createFloatBuffer(16);
     private static final FloatBuffer MATRIX_WRITE_BUF = BufferUtils.createFloatBuffer(16);
+    private static final FloatBuffer FOG_COLOR_BUF = BufferUtils.createFloatBuffer(16);
     private static final ByteBuffer COLOR_MASK_BUF = BufferUtils.createByteBuffer(16);
 
     private static final float[] TMP_MV = new float[16];
@@ -106,6 +112,16 @@ public final class WaterShaderPipeline {
     private static float envUnderwaterBrightness = 1.0F;
     private static float envCamXMod640 = 0.0F;
     private static float envCamZMod640 = 0.0F;
+    private static float envFogStart = 64.0F;
+    private static float envFogEnd = 128.0F;
+    private static float envFogR = 0.7F;
+    private static float envFogG = 0.8F;
+    private static float envFogB = 1.0F;
+    private static int envBiomeSampleCounter = 0;
+    private static boolean envBiomeColorInitialized = false;
+    private static final float[] TMP_BIOME_RGB = new float[3];
+    private static final float[] ENV_TARGET_WATER_COLOR = new float[]{0.0F, 0.5F, 0.35F};
+    private static final float[] ENV_EFFECTIVE_WATER_COLOR = new float[]{0.0F, 0.5F, 0.35F};
 
     private static boolean savedColorMaskValid = false;
     private static boolean savedColorMaskR = true;
@@ -140,23 +156,35 @@ public final class WaterShaderPipeline {
         userEnabled = true;
         debugStencilView = false;
         waterVisibleInMainPass = false;
+        skyExposedWaterVisibleInMainPass = false;
         skippedWaterPassesThisFrame = false;
         reflectionRenderedThisFrame = false;
+        seabedDepthCopiedThisFrame = false;
+        stencilDepthBlittedThisFrame = false;
         waterDepthCopiedThisFrame = false;
         handDepthCopiedThisFrame = false;
         weatherRenderedThisFrame = false;
         renderingIsolatedWeather = false;
         envRainAnimSeconds = 0.0;
         envUnderwaterFactor = 0.0F;
+        envBiomeSampleCounter = 0;
+        envBiomeColorInitialized = false;
+        ENV_EFFECTIVE_WATER_COLOR[0] = cfg.getWaterColorR();
+        ENV_EFFECTIVE_WATER_COLOR[1] = cfg.getWaterColorG();
+        ENV_EFFECTIVE_WATER_COLOR[2] = cfg.getWaterColorB();
         currentPass = WaterRenderPass.NONE;
         initialized = true;
         lastConfiguredEnabled = isConfiguredEnabled();
         WaterShaderConfig.setChangeListener(WaterShaderPipeline::onConfigChanged);
         log.info(
-                "[WaterShader] Pipeline initialized (water_mode={}, aa={}, refl_div={}, amphetamine={})",
+                "[WaterShader] Pipeline initialized (preset={}, water_mode={}, aa={}, refl_div={}, stencil1x={}, depthBlit={}, caveSkip={}, amphetamine={})",
+                cfg.getWaterPreset(),
                 cfg.getWaterMode(),
                 cfg.getAntiAliasing(),
                 cfg.getReflectionResolution(),
+                cfg.isStencilNative1x(),
+                cfg.isFastStencilDepthBlit(),
+                cfg.isSkipCaveReflections(),
                 amphetamineDetected);
     }
 
@@ -172,13 +200,18 @@ public final class WaterShaderPipeline {
         userEnabled = true;
         debugStencilView = false;
         waterVisibleInMainPass = false;
+        skyExposedWaterVisibleInMainPass = false;
         skippedWaterPassesThisFrame = false;
         reflectionRenderedThisFrame = false;
+        seabedDepthCopiedThisFrame = false;
+        stencilDepthBlittedThisFrame = false;
         waterDepthCopiedThisFrame = false;
         handDepthCopiedThisFrame = false;
         weatherRenderedThisFrame = false;
         renderingIsolatedWeather = false;
         envUnderwaterFactor = 0.0F;
+        envBiomeSampleCounter = 0;
+        envBiomeColorInitialized = false;
         capOpenGL14 = false;
         savedShadeModelValid = false;
         if (fboManager != null) {
@@ -199,6 +232,8 @@ public final class WaterShaderPipeline {
         Set<Integer> previousIds = new HashSet<>(EXCLUDED_BLOCK_IDS);
         Set<String> previousKeys = new HashSet<>(EXCLUDED_BLOCK_KEYS);
         rebuildExcludeCache(config);
+        envBiomeSampleCounter = 0;
+        envBiomeColorInitialized = false;
 
         boolean nowEnabled = isConfiguredEnabled();
         boolean turnedOnFromOff = !lastConfiguredEnabled && nowEnabled;
@@ -212,10 +247,12 @@ public final class WaterShaderPipeline {
 
         if (logger != null) {
             logger.info(
-                    "[WaterShader] Config updated (water_mode={}, aa={}, refl_div={}, excluded={})",
+                    "[WaterShader] Config updated (preset={}, water_mode={}, aa={}, refl_div={}, biome_tint={}, excluded={})",
+                    config.getWaterPreset(),
                     config.getWaterMode(),
                     config.getAntiAliasing(),
                     config.getReflectionResolution(),
+                    config.getBiomeTintMode(),
                     EXCLUDED_BLOCK_IDS.size() + EXCLUDED_BLOCK_KEYS.size());
         }
 
@@ -267,9 +304,9 @@ public final class WaterShaderPipeline {
         if (!ModernWeatherRenderer.hasBubbleParticles(activeClient)) {
             return;
         }
-        float wcR = (config != null) ? config.getWaterColorR() : 0.0F;
-        float wcG = (config != null) ? config.getWaterColorG() : 0.5F;
-        float wcB = (config != null) ? config.getWaterColorB() : 0.35F;
+        float wcR = ENV_EFFECTIVE_WATER_COLOR[0];
+        float wcG = ENV_EFFECTIVE_WATER_COLOR[1];
+        float wcB = ENV_EFFECTIVE_WATER_COLOR[2];
         ModernWeatherRenderer.renderModernWaterBubbles(
                 activeClient,
                 camera,
@@ -323,9 +360,9 @@ public final class WaterShaderPipeline {
             if (allowRainAndSnow && rainGrad > 0.005F) {
                 vanillaSnowRunner.run();
             }
-            float wcR = (config != null) ? config.getWaterColorR() : 0.0F;
-            float wcG = (config != null) ? config.getWaterColorG() : 0.5F;
-            float wcB = (config != null) ? config.getWaterColorB() : 0.35F;
+            float wcR = ENV_EFFECTIVE_WATER_COLOR[0];
+            float wcG = ENV_EFFECTIVE_WATER_COLOR[1];
+            float wcB = ENV_EFFECTIVE_WATER_COLOR[2];
             ModernWeatherRenderer.renderModernRainAndSplashes(
                     client,
                     tickDelta,
@@ -345,10 +382,43 @@ public final class WaterShaderPipeline {
         }
     }
 
+    /**
+     * Runs right before Layer 1 translucent geometry draws in Pass 0 ({@code MAIN}), when the
+     * main FBO depth buffer holds pure opaque Layer 0 terrain + entities and OpenGL holds live fog state.
+     */
+    public static void onBeforeLayer1() {
+        if (currentPass != WaterRenderPass.MAIN || fboManager == null || !fboManager.isValid()) {
+            return;
+        }
+        // Capture live scene fog parameters (set by GameRenderer.applyFog right before Layer 1)
+        envFogStart = GL11.glGetFloat(GL11.GL_FOG_START);
+        envFogEnd = GL11.glGetFloat(GL11.GL_FOG_END);
+        FOG_COLOR_BUF.clear();
+        GL11.glGetFloat(GL11.GL_FOG_COLOR, FOG_COLOR_BUF);
+        envFogR = FOG_COLOR_BUF.get(0);
+        envFogG = FOG_COLOR_BUF.get(1);
+        envFogB = FOG_COLOR_BUF.get(2);
+
+        boolean needSeabedDepth = config != null && config.isDepthAbsorption();
+        if (needSeabedDepth && !seabedDepthCopiedThisFrame) {
+            fboManager.copyMainDepthToSeabed();
+            seabedDepthCopiedThisFrame = true;
+        }
+
+        if (config != null && config.isFastStencilDepthBlit() && !stencilDepthBlittedThisFrame) {
+            stencilDepthBlittedThisFrame = fboManager.blitMainDepthToStencil();
+        }
+    }
+
     public static void onAfterLayer1() {
+        boolean needSurfaceDepth = waterVisibleInMainPass
+                && config != null
+                && ((!envHasCeiling && envRain > 0.005F && config.isRainRipples())
+                || config.isDepthAbsorption()
+                || config.isHorizonFogFade());
         boolean needWaterDepth = envCameraEyeInWater
                 || envUnderwaterFactor > 0.005F
-                || (!envHasCeiling && envRain > 0.005F);
+                || needSurfaceDepth;
         if (currentPass == WaterRenderPass.MAIN
                 && needWaterDepth
                 && !waterDepthCopiedThisFrame
@@ -359,10 +429,17 @@ public final class WaterShaderPipeline {
         }
     }
 
-    public static void markWaterVisibleThisPass() {
+    public static void markWaterVisibleThisPass(boolean skyExposed) {
         if (currentPass == WaterRenderPass.MAIN) {
             waterVisibleInMainPass = true;
+            if (skyExposed) {
+                skyExposedWaterVisibleInMainPass = true;
+            }
         }
+    }
+
+    public static boolean shouldSkipLayer0InCurrentPass() {
+        return currentPass == WaterRenderPass.STENCIL && stencilDepthBlittedThisFrame;
     }
 
     public static WaterRenderPass getCurrentPass() {
@@ -445,6 +522,8 @@ public final class WaterShaderPipeline {
             lastWorldRef = new WeakReference<>(client.world);
             WATER_PLANE_FINDER.reset();
             envUnderwaterFactor = 0.0F;
+            envBiomeSampleCounter = 0;
+            envBiomeColorInitialized = false;
         }
 
         updateTimer();
@@ -457,7 +536,8 @@ public final class WaterShaderPipeline {
                 client.displayHeight,
                 config.getAntiAliasing(),
                 config.getReflectionResolution(),
-                withReflection)) {
+                withReflection,
+                config.isStencilNative1x())) {
             currentPass = WaterRenderPass.NONE;
             singlePassRender.run();
             return;
@@ -465,8 +545,11 @@ public final class WaterShaderPipeline {
 
         try {
             waterVisibleInMainPass = false;
+            skyExposedWaterVisibleInMainPass = false;
             skippedWaterPassesThisFrame = false;
             reflectionRenderedThisFrame = false;
+            seabedDepthCopiedThisFrame = false;
+            stencilDepthBlittedThisFrame = false;
             waterDepthCopiedThisFrame = false;
             handDepthCopiedThisFrame = false;
             weatherRenderedThisFrame = false;
@@ -481,7 +564,12 @@ public final class WaterShaderPipeline {
                 executePass(WaterRenderPass.STENCIL, () -> fboManager.bindStencil(), singlePassRender);
 
                 // Pass 2: Mirrored oblique-clipped reflection -> FBO 2 (reflectedColorMap)
-                if (withReflection && !envHasCeiling && !debugStencilView) {
+                if (WaterEnvironmentMath.shouldExecuteReflectionPass(
+                        withReflection,
+                        envHasCeiling,
+                        debugStencilView,
+                        config.isSkipCaveReflections(),
+                        skyExposedWaterVisibleInMainPass)) {
                     executePass(WaterRenderPass.REFLECTION, () -> fboManager.bindReflection(), singlePassRender);
                     reflectionRenderedThisFrame = true;
                 }
@@ -587,14 +675,23 @@ public final class WaterShaderPipeline {
     }
 
     public static void onGlClear(int mask) {
-        if (currentPass == WaterRenderPass.STENCIL && (mask & GL11.GL_COLOR_BUFFER_BIT) != 0) {
-            GL11.glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+        int clearMask = mask;
+        if (currentPass == WaterRenderPass.STENCIL) {
+            if ((clearMask & GL11.GL_COLOR_BUFFER_BIT) != 0) {
+                GL11.glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+            }
+            if (stencilDepthBlittedThisFrame) {
+                // Keep Layer 0 + entities depth blitted from Pass 0 intact
+                clearMask &= ~GL11.GL_DEPTH_BUFFER_BIT;
+            }
         } else if (currentPass == WaterRenderPass.REFLECTION
                 && !envShouldRenderReflSky
-                && (mask & GL11.GL_COLOR_BUFFER_BIT) != 0) {
+                && (clearMask & GL11.GL_COLOR_BUFFER_BIT) != 0) {
             GL11.glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
         }
-        GL11.glClear(mask);
+        if (clearMask != 0) {
+            GL11.glClear(clearMask);
+        }
     }
 
     public static boolean shouldRenderSky() {
@@ -645,6 +742,9 @@ public final class WaterShaderPipeline {
     }
 
     public static boolean shouldRenderEntities() {
+        if (currentPass == WaterRenderPass.STENCIL && stencilDepthBlittedThisFrame) {
+            return false;
+        }
         if (currentPass == WaterRenderPass.REFLECTION) {
             return config != null && (config.isReflectiveItems() || config.isReflectPlayer());
         }
@@ -782,9 +882,9 @@ public final class WaterShaderPipeline {
                             logger);
                     transparency.setUniform3f(
                             "water_color",
-                            config.getWaterColorR(),
-                            config.getWaterColorG(),
-                            config.getWaterColorB(),
+                            ENV_EFFECTIVE_WATER_COLOR[0],
+                            ENV_EFFECTIVE_WATER_COLOR[1],
+                            ENV_EFFECTIVE_WATER_COLOR[2],
                             logger);
                     transparency.setUniform1f("waterfall_fog", config.isWaterfallFog() ? 1.0F : 0.0F, logger);
                     transparency.setUniform1f("env_sky_light", envTransparencySkyLight, logger);
@@ -792,6 +892,7 @@ public final class WaterShaderPipeline {
                             "still_refl_enabled",
                             WaterEnvironmentMath.computeStillReflEnabledUniform(config.getWaterMode(), envHasCeiling),
                             logger);
+                    transparency.setUniform1f("modern_cave_water", config.isModernCaveWater() ? 1.0F : 0.0F, logger);
                     activeLayer1BoundShader = true;
                 }
                 return amphetamineDetected;
@@ -907,10 +1008,13 @@ public final class WaterShaderPipeline {
                     int reflTex = (skippedWaterPassesThisFrame || !reflectionRenderedThisFrame)
                             ? fboManager.getDummyBlackTexture()
                             : fboManager.getReflectionTexture();
-                    boolean useCapturedDepth = waterDepthCopiedThisFrame
-                            && (envCameraEyeInWater || envUnderwaterFactor > 0.005F || (!envHasCeiling && envRain > 0.005F));
-                    int waterDepthTex = useCapturedDepth
+                    boolean useCapturedWaterDepth = waterDepthCopiedThisFrame;
+                    boolean useCapturedSeabedDepth = seabedDepthCopiedThisFrame && !skippedWaterPassesThisFrame;
+                    int waterDepthTex = useCapturedWaterDepth
                             ? fboManager.getWaterDepthTexture()
+                            : fboManager.getDummyDepthTexture();
+                    int seabedDepthTex = useCapturedSeabedDepth
+                            ? fboManager.getSeabedDepthTexture()
                             : fboManager.getDummyDepthTexture();
                     int handDepthTex = handDepthCopiedThisFrame
                             ? fboManager.getHandDepthTexture()
@@ -919,6 +1023,8 @@ public final class WaterShaderPipeline {
                             ? fboManager.getWeatherTexture()
                             : fboManager.getDummyTransparentTexture();
 
+                    GL13.glActiveTexture(GL13.GL_TEXTURE6);
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, seabedDepthTex);
                     GL13.glActiveTexture(GL13.GL_TEXTURE5);
                     GL11.glBindTexture(GL11.GL_TEXTURE_2D, weatherTex);
                     GL13.glActiveTexture(GL13.GL_TEXTURE4);
@@ -941,11 +1047,12 @@ public final class WaterShaderPipeline {
                     water.setUniform1i("waterDepthMap", 3, logger);
                     water.setUniform1i("handDepthMap", 4, logger);
                     water.setUniform1i("weatherMap", 5, logger);
+                    water.setUniform1i("seabedDepthMap", 6, logger);
                     water.setUniform3f(
                             "water_color",
-                            config.getWaterColorR(),
-                            config.getWaterColorG(),
-                            config.getWaterColorB(),
+                            ENV_EFFECTIVE_WATER_COLOR[0],
+                            ENV_EFFECTIVE_WATER_COLOR[1],
+                            ENV_EFFECTIVE_WATER_COLOR[2],
                             logger);
                     // Normalize texelSize to baseline 2x display resolution so blur/feather radii stay
                     // visually identical across anti_aliasing = 1, 2, 3+
@@ -958,12 +1065,16 @@ public final class WaterShaderPipeline {
                     water.setUniform1f("fresnel_strength", config.getFresnelStrength(), logger);
                     water.setUniform1f("z_near", MAIN_NEAR_FAR[0], logger);
                     water.setUniform1f("z_far", MAIN_NEAR_FAR[1], logger);
-                    water.setUniform1f("refl_brightness", (config.getWaterMode() >= 2) ? envReflBrightness : 0.0F, logger);
+                    water.setUniform1f(
+                            "refl_brightness",
+                            (config.getWaterMode() >= 2 && reflectionRenderedThisFrame) ? envReflBrightness : 0.0F,
+                            logger);
+                    boolean rainRipplesActive = config.isRainRipples() && !envHasCeiling;
                     water.setUniform1f(
                             "rain_strength",
-                            (!envHasCeiling && useCapturedDepth && mainInvVpValid) ? envRain : 0.0F,
+                            (rainRipplesActive && useCapturedWaterDepth && mainInvVpValid) ? envRain : 0.0F,
                             logger);
-                    water.setUniform1f("rain_blur_strength", !envHasCeiling ? envRain : 0.0F, logger);
+                    water.setUniform1f("rain_blur_strength", rainRipplesActive ? envRain : 0.0F, logger);
                     water.setUniformMat4("inv_view_proj", MAIN_INV_VP, false, logger);
                     water.setUniform2f("rain_cam_xz", envCamXMod640, envCamZMod640, logger);
                     water.setUniform1f("weather_active", weatherRenderedThisFrame ? 1.0F : 0.0F, logger);
@@ -977,6 +1088,16 @@ public final class WaterShaderPipeline {
                                     config.isUnderwaterEffect(), envUnderwaterFactor),
                             logger);
                     water.setUniform1f("uw_brightness", envUnderwaterBrightness, logger);
+                    water.setUniform1f("env_sky_ambient", envSkyAmbient, logger);
+                    water.setUniform1f("water_depth_valid", (useCapturedWaterDepth && mainInvVpValid) ? 1.0F : 0.0F, logger);
+                    water.setUniform1f("seabed_depth_valid", useCapturedSeabedDepth ? 1.0F : 0.0F, logger);
+                    water.setUniform1f("depth_absorption_enabled", config.isDepthAbsorption() ? 1.0F : 0.0F, logger);
+                    water.setUniform1f("depth_absorption_strength", config.getDepthAbsorptionStrength(), logger);
+                    water.setUniform1f("horizon_fog_enabled", config.isHorizonFogFade() ? 1.0F : 0.0F, logger);
+                    water.setUniform3f("fog_color", envFogR, envFogG, envFogB, logger);
+                    water.setUniform1f("fog_start", envFogStart, logger);
+                    water.setUniform1f("fog_end", envFogEnd, logger);
+                    water.setUniform1f("modern_cave_water", config.isModernCaveWater() ? 1.0F : 0.0F, logger);
 
                     drawScreenQuad(safeW, safeH);
                     water.unbind();
@@ -984,6 +1105,8 @@ public final class WaterShaderPipeline {
             }
         } finally {
             ShaderProgram.unbindActive();
+            GL13.glActiveTexture(GL13.GL_TEXTURE6);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
             GL13.glActiveTexture(GL13.GL_TEXTURE5);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
             GL13.glActiveTexture(GL13.GL_TEXTURE4);
@@ -1127,6 +1250,46 @@ public final class WaterShaderPipeline {
         envShouldRenderReflSky = WaterEnvironmentMath.shouldRenderReflectionSky(envHasCeiling, envCameraSkyLight);
         envUnderwaterBrightness = WaterEnvironmentMath.computeUnderwaterBrightness(
                 envSkyAmbient, envRain, envCameraSkyLight, envHasCeiling);
+        updateEffectiveWaterColor(world, camWorldX, camWorldZ);
+    }
+
+    private static void updateEffectiveWaterColor(World world, double camWorldX, double camWorldZ) {
+        if (config == null) {
+            return;
+        }
+        float baseR = config.getWaterColorR();
+        float baseG = config.getWaterColorG();
+        float baseB = config.getWaterColorB();
+        BiomeTintMode mode = config.getBiomeTintMode();
+        if (mode == BiomeTintMode.OFF || world == null || world.dimension == null || world.dimension.biomeSource == null) {
+            ENV_TARGET_WATER_COLOR[0] = baseR;
+            ENV_TARGET_WATER_COLOR[1] = baseG;
+            ENV_TARGET_WATER_COLOR[2] = baseB;
+            BiomeWaterColorHelper.stepSmoothedColor(ENV_EFFECTIVE_WATER_COLOR, ENV_TARGET_WATER_COLOR, lastFrameDtSeconds, true);
+            envBiomeColorInitialized = true;
+            return;
+        }
+        if (!envBiomeColorInitialized || envBiomeSampleCounter <= 0) {
+            envBiomeSampleCounter = 8;
+            BiomeWaterColorHelper.sampleAreaBiomePalette(
+                    world.dimension.biomeSource,
+                    MathHelper.floor(camWorldX),
+                    MathHelper.floor(camWorldZ),
+                    TMP_BIOME_RGB);
+            BiomeWaterColorHelper.blendWithBaseColor(
+                    baseR, baseG, baseB,
+                    TMP_BIOME_RGB[0], TMP_BIOME_RGB[1], TMP_BIOME_RGB[2],
+                    mode,
+                    ENV_TARGET_WATER_COLOR);
+        } else {
+            envBiomeSampleCounter--;
+        }
+        BiomeWaterColorHelper.stepSmoothedColor(
+                ENV_EFFECTIVE_WATER_COLOR,
+                ENV_TARGET_WATER_COLOR,
+                lastFrameDtSeconds,
+                !envBiomeColorInitialized);
+        envBiomeColorInitialized = true;
     }
 
     private static boolean resolveCameraSubmersionAndEyePos(

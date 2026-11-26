@@ -2,8 +2,7 @@ package net.watershader.render;
 
 /**
  * Duck interface applied to {@link net.minecraft.client.render.chunk.ChunkBuilder} to attach
- * per-chunk translucent (Layer 1) geometry when rendering alongside mods that replace display lists
- * (such as Amphetamine).
+ * per-chunk translucent (Layer 1) geometry and water visibility flags.
  */
 public interface WaterChunkAccess {
     WaterLayer1Mesh watershader$getLayer1Mesh();
@@ -15,4 +14,8 @@ public interface WaterChunkAccess {
     boolean watershader$hasWater();
 
     void watershader$setHasWater(boolean hasWater);
+
+    boolean watershader$hasSkyExposedWater();
+
+    void watershader$setHasSkyExposedWater(boolean hasSkyExposedWater);
 }
